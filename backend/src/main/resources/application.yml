@@ -1,0 +1,18 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: trading-intelligence-platform
+
+tip:
+  upstox:
+    access-token: ${UPSTOX_ACCESS_TOKEN:}
+  market:
+    default-symbol: RELIANCE
+    default-instrument-key: "NSE_EQ|INE002A01018"
+    default-timeframe: 5m
+    live-feed-enabled: true
+    candle-update-throttle-ms: 1000
+  cors:
+    allowed-origins: http://localhost:5173

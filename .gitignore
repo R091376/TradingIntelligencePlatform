@@ -1,0 +1,16 @@
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+**/node_modules/
+**/dist/
+**/target/
+
+# IDE / tooling
+terminals/
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.log
