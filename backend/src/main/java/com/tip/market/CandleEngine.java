@@ -114,6 +114,19 @@ public class CandleEngine {
         }
     }
 
+    /**
+     * Remove all timeframe state for an instrument. Safe if none exists.
+     * State key is {@code instrumentKey + "|" + timeframe}; prefix match on
+     * {@code instrumentKey + "|"} is correct because timeframe has no {@code |}.
+     */
+    public void evict(String instrumentKey) {
+        if (instrumentKey == null || instrumentKey.isBlank()) {
+            return;
+        }
+        String prefix = instrumentKey + "|";
+        stateByKey.keySet().removeIf(k -> k.startsWith(prefix));
+    }
+
     private void closeCurrentCandle(SymbolState state, String instrumentKey, String timeframe) {
         Candle closed = state.currentCandle.toCandle();
         state.closedCandles.add(closed);

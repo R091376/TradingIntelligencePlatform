@@ -3,6 +3,8 @@ package com.tip.api.websocket;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tip.api.dto.SubscribeMessage;
 import com.tip.config.MarketProperties;
+import com.tip.watchlist.WatchlistEntry;
+import com.tip.watchlist.WatchlistRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -22,12 +24,18 @@ public class LiveWebSocketHandler extends TextWebSocketHandler {
 
     private final ObjectMapper objectMapper;
     private final MarketProperties marketProperties;
+    private final WatchlistRepository watchlistRepository;
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
     private final Map<String, LiveSubscription> subscriptions = new ConcurrentHashMap<>();
 
-    public LiveWebSocketHandler(ObjectMapper objectMapper, MarketProperties marketProperties) {
+    public LiveWebSocketHandler(
+            ObjectMapper objectMapper,
+            MarketProperties marketProperties,
+            WatchlistRepository watchlistRepository
+    ) {
         this.objectMapper = objectMapper;
         this.marketProperties = marketProperties;
+        this.watchlistRepository = watchlistRepository;
     }
 
     @Override
@@ -48,17 +56,27 @@ public class LiveWebSocketHandler extends TextWebSocketHandler {
         String timeframe = subscribeMessage.timeframe() != null
                 ? subscribeMessage.timeframe()
                 : marketProperties.defaultTimeframe();
-        String symbolId = subscribeMessage.symbolId() != null
-                ? subscribeMessage.symbolId()
-                : marketProperties.defaultInstrumentKey();
 
-        if (!marketProperties.defaultInstrumentKey().equals(symbolId)) {
-            sendError(session, "Unknown symbolId for MVP1: " + symbolId);
+        String symbolId = subscribeMessage.symbolId();
+        if (symbolId == null || symbolId.isBlank()) {
+            symbolId = watchlistRepository.findPrimary()
+                    .map(WatchlistEntry::symbolId)
+                    .orElse(marketProperties.defaultInstrumentKey());
+        }
+
+        if (symbolId == null || symbolId.isBlank()) {
+            sendError(session, "No symbols on watchlist");
             return;
         }
 
-        if (!marketProperties.defaultTimeframe().equals(timeframe)) {
-            sendError(session, "Unsupported timeframe for MVP1: " + timeframe);
+        if (!isAcceptedSymbol(symbolId)) {
+            sendError(session, "Unknown symbolId: " + symbolId);
+            return;
+        }
+
+        if (!isSupportedTimeframe(timeframe)) {
+            sendError(session, "Unsupported timeframe: " + timeframe
+                    + " (supported: " + marketProperties.supportedTimeframes() + ")");
             return;
         }
 
@@ -71,6 +89,33 @@ public class LiveWebSocketHandler extends TextWebSocketHandler {
                 "symbolId", symbolId,
                 "timeframe", timeframe
         ))));
+    }
+
+    /**
+     * Accept if on public-active watchlist, or equals primary/default (chart continuity interim).
+     */
+    private boolean isAcceptedSymbol(String symbolId) {
+        if (watchlistRepository.containsSymbolId(symbolId)) {
+            return true;
+        }
+        String primaryId = watchlistRepository.findPrimary()
+                .map(WatchlistEntry::symbolId)
+                .orElse(null);
+        if (symbolId.equals(primaryId)) {
+            return true;
+        }
+        return symbolId.equals(marketProperties.defaultInstrumentKey());
+    }
+
+    private boolean isSupportedTimeframe(String timeframe) {
+        if (timeframe == null) {
+            return false;
+        }
+        if (timeframe.equals(marketProperties.defaultTimeframe())) {
+            return true;
+        }
+        var supported = marketProperties.supportedTimeframes();
+        return supported != null && supported.contains(timeframe);
     }
 
     @Override

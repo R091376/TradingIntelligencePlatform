@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Set;
 
 @Service
 public class UpstoxMarketDataProvider implements MarketDataProvider {
@@ -77,9 +78,21 @@ public class UpstoxMarketDataProvider implements MarketDataProvider {
     }
 
     @Override
-    public void connectLiveFeed(String instrumentKey, TickHandler handler) {
-        log.info("Starting Upstox live feed for {}", instrumentKey);
-        feedClient.connect(instrumentKey, handler);
+    public void connectLiveFeed(Set<String> instrumentKeys, TickHandler handler) {
+        log.info("Starting Upstox live feed for {} instrument(s)", instrumentKeys.size());
+        feedClient.connect(instrumentKeys, handler);
+    }
+
+    @Override
+    public void subscribeInstruments(Set<String> instrumentKeys) {
+        log.info("Subscribing live feed instruments: {}", instrumentKeys);
+        feedClient.subscribe(instrumentKeys);
+    }
+
+    @Override
+    public void unsubscribeInstruments(Set<String> instrumentKeys) {
+        log.info("Unsubscribing live feed instruments: {}", instrumentKeys);
+        feedClient.unsubscribe(instrumentKeys);
     }
 
     @Override

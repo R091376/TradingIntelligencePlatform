@@ -76,6 +76,28 @@ class CandleEngineTest {
         assertEquals(250L, current.volume());
     }
 
+    @Test
+    void evictRemovesAllTimeframesForInstrument() {
+        String other = "NSE_INDEX|Nifty 50";
+        candleEngine.seed(INSTRUMENT, "5m", List.of(new Candle(1000L, 1, 1, 1, 1, 0)));
+        candleEngine.seed(INSTRUMENT, "15m", List.of(new Candle(1000L, 2, 2, 2, 2, 0)));
+        candleEngine.seed(other, "5m", List.of(new Candle(1000L, 3, 3, 3, 3, 0)));
+
+        candleEngine.evict(INSTRUMENT);
+
+        assertTrue(candleEngine.getAllCandles(INSTRUMENT, "5m").isEmpty());
+        assertTrue(candleEngine.getAllCandles(INSTRUMENT, "15m").isEmpty());
+        assertEquals(1, candleEngine.getAllCandles(other, "5m").size());
+        assertEquals(3.0, candleEngine.getAllCandles(other, "5m").get(0).close());
+    }
+
+    @Test
+    void evictIsSafeWhenNoState() {
+        candleEngine.evict("NSE_EQ|DOES_NOT_EXIST");
+        candleEngine.evict(null);
+        candleEngine.evict("");
+    }
+
     private Tick tick(ZonedDateTime time, double price, long vtt) {
         return new Tick(INSTRUMENT, price, vtt, time.toInstant().toEpochMilli());
     }

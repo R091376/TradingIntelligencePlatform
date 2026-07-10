@@ -13,6 +13,9 @@ import java.util.concurrent.atomic.AtomicReference;
 @Service
 public class MarketStatusService {
 
+    static final String SEGMENT_NSE_EQ = "NSE_EQ";
+    static final String SEGMENT_NSE_INDEX = "NSE_INDEX";
+
     private final ApplicationEventPublisher eventPublisher;
     private final AtomicReference<MarketPhase> marketPhase =
             new AtomicReference<>(NseMarketClock.phaseFromClock());
@@ -72,17 +75,37 @@ public class MarketStatusService {
         liveFeedConnected.set(connected);
     }
 
+    /**
+     * Prefer {@code NSE_EQ} when present; else {@code NSE_INDEX}; else keep clock phase (KD24).
+     */
     public void updateFromSegmentStatus(Map<String, MarketUpdateV3.MarketStatus> segmentStatus) {
-        if (segmentStatus == null) {
+        MarketUpdateV3.MarketStatus status = selectSegmentStatus(segmentStatus);
+        if (status == null) {
             return;
         }
+        setMarketPhase(mapSegmentStatus(status));
+    }
 
-        MarketUpdateV3.MarketStatus nseEq = segmentStatus.get("NSE_EQ");
-        if (nseEq == null) {
-            return;
+    /**
+     * Segment preference for feed market_info (KD24).
+     * <ul>
+     *   <li>NSE_EQ only → EQ</li>
+     *   <li>NSE_INDEX only → INDEX</li>
+     *   <li>Both → prefer NSE_EQ</li>
+     *   <li>Neither / null → null (no update)</li>
+     * </ul>
+     */
+    static MarketUpdateV3.MarketStatus selectSegmentStatus(
+            Map<String, MarketUpdateV3.MarketStatus> segmentStatus
+    ) {
+        if (segmentStatus == null || segmentStatus.isEmpty()) {
+            return null;
         }
-
-        setMarketPhase(mapSegmentStatus(nseEq));
+        MarketUpdateV3.MarketStatus nseEq = segmentStatus.get(SEGMENT_NSE_EQ);
+        if (nseEq != null) {
+            return nseEq;
+        }
+        return segmentStatus.get(SEGMENT_NSE_INDEX);
     }
 
     public void refreshPhaseFromClock() {

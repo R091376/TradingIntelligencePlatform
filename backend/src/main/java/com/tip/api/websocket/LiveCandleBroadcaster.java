@@ -60,4 +60,15 @@ public class LiveCandleBroadcaster {
         );
         webSocketHandler.broadcast(event.instrumentKey(), event.timeframe(), message);
     }
+
+    /**
+     * Drop throttle timestamps for all timeframes of an instrument (on watchlist remove).
+     */
+    public void evictThrottleKeys(String instrumentKey) {
+        if (instrumentKey == null || instrumentKey.isBlank()) {
+            return;
+        }
+        String prefix = instrumentKey + "|";
+        lastUpdateSentAt.keySet().removeIf(k -> k.startsWith(prefix));
+    }
 }

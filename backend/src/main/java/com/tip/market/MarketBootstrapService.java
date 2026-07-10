@@ -3,13 +3,21 @@ package com.tip.market;
 import com.tip.config.MarketProperties;
 import com.tip.config.UpstoxProperties;
 import com.tip.market.model.Candle;
+import com.tip.watchlist.SymbolBootstrapStatus;
+import com.tip.watchlist.WatchlistEntry;
+import com.tip.watchlist.WatchlistRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 public class MarketBootstrapService {
@@ -21,6 +29,7 @@ public class MarketBootstrapService {
     private final MarketProperties marketProperties;
     private final UpstoxProperties upstoxProperties;
     private final MarketStatusService marketStatusService;
+    private final WatchlistRepository watchlistRepository;
 
     @Value("${tip.market.live-feed-enabled:true}")
     private boolean liveFeedEnabled;
@@ -30,16 +39,23 @@ public class MarketBootstrapService {
             CandleEngine candleEngine,
             MarketProperties marketProperties,
             UpstoxProperties upstoxProperties,
-            MarketStatusService marketStatusService
+            MarketStatusService marketStatusService,
+            WatchlistRepository watchlistRepository
     ) {
         this.marketDataProvider = marketDataProvider;
         this.candleEngine = candleEngine;
         this.marketProperties = marketProperties;
         this.upstoxProperties = upstoxProperties;
         this.marketStatusService = marketStatusService;
+        this.watchlistRepository = watchlistRepository;
     }
 
-    public void recoverSession() {
+    /**
+     * Bootstrap all public-active watchlist symbols sequentially (all TFs each),
+     * then connect the live feed once with the union of active keys.
+     * Global READY if ≥1 symbol READY; FAILED if zero.
+     */
+    public void recoverAllActive() {
         marketStatusService.refreshPhaseFromClock();
 
         if (upstoxProperties.accessToken() == null || upstoxProperties.accessToken().isBlank()) {
@@ -49,53 +65,175 @@ public class MarketBootstrapService {
             return;
         }
 
-        String instrumentKey = marketProperties.defaultInstrumentKey();
-        String timeframe = marketProperties.defaultTimeframe();
-        String symbol = marketProperties.defaultSymbol();
+        List<WatchlistEntry> active = watchlistRepository.findAllActive();
+        if (active.isEmpty()) {
+            marketStatusService.setBootstrapFailed(
+                    "No symbols on watchlist to bootstrap. Check seed configuration and instrument master.");
+            log.warn("Session recovery skipped — watchlist is empty");
+            return;
+        }
 
         marketStatusService.setBootstrapPending();
-        log.info("Session recovery: fetching {} {} candles for {}", timeframe, symbol, instrumentKey);
+        int readyCount = 0;
+        int totalCandles = 0;
+        int n = active.size();
+        int i = 0;
 
-        try {
-            List<Candle> seedCandles = loadSeedCandles(instrumentKey, timeframe);
-            candleEngine.seed(instrumentKey, timeframe, seedCandles);
-            marketStatusService.setBootstrapReady(seedCandles.size());
+        for (WatchlistEntry entry : active) {
+            i++;
+            log.info("Session recovery: symbol {}/{} {} ({})",
+                    i, n, entry.tradingSymbol(), entry.symbolId());
+            BootstrapSymbolResult result = bootstrapSymbol(entry);
+            if (result.status() == SymbolBootstrapStatus.READY) {
+                readyCount++;
+                totalCandles += result.seededCandleCount();
+            }
+        }
 
-            log.info("Session recovery complete: {} candles ({} closed, in-progress={})",
-                    seedCandles.size(),
-                    candleEngine.getClosedCandles(instrumentKey, timeframe).size(),
-                    candleEngine.getCurrentCandle(instrumentKey, timeframe).isPresent());
-
-            connectLiveFeedIfEnabled(instrumentKey, timeframe);
-        } catch (UpstoxMarketDataException e) {
-            String message = toUserFriendlyError(e);
+        if (readyCount >= 1) {
+            marketStatusService.setBootstrapReady(totalCandles);
+            log.info("Session recovery complete: {}/{} symbols READY, total seeded candles≈{}",
+                    readyCount, n, totalCandles);
+            connectLiveFeedForActive();
+        } else {
+            String message = "Failed to seed any watchlist symbol. Check Upstox token and network.";
             marketStatusService.setBootstrapFailed(message);
-            log.error("Session recovery failed: {}", message);
+            log.error("Session recovery failed: zero symbols READY of {}", n);
         }
     }
 
-    private void connectLiveFeedIfEnabled(String instrumentKey, String timeframe) {
+    /**
+     * Seed all supported timeframes for one watchlist entry sequentially.
+     * Cooperative cancel: before each TF and before writing READY/FAILED, abort if
+     * {@link WatchlistRepository#findBySymbolId} is empty or status is REMOVING.
+     * <p>
+     * Per-symbol: READY if ≥1 TF seeded; FAILED if 0.
+     */
+    public BootstrapSymbolResult bootstrapSymbol(WatchlistEntry entry) {
+        String symbolId = entry.symbolId();
+        List<String> timeframes = marketProperties.supportedTimeframes();
+        int seededTfCount = 0;
+        int candleCount = 0;
+        List<String> errors = new ArrayList<>();
+
+        // Ensure PENDING while seeding (preserve other fields)
+        if (!isCancelled(symbolId)) {
+            updateBootstrapStatus(symbolId, SymbolBootstrapStatus.PENDING, null);
+        }
+
+        for (String timeframe : timeframes) {
+            if (isCancelled(symbolId)) {
+                log.info("Bootstrap cancelled for {} before TF {}", symbolId, timeframe);
+                return BootstrapSymbolResult.cancelled(symbolId);
+            }
+            try {
+                List<Candle> seedCandles = loadSeedCandles(symbolId, timeframe);
+                candleEngine.seed(symbolId, timeframe, seedCandles);
+                seededTfCount++;
+                candleCount += seedCandles.size();
+                log.info("Seeded {} {} candles for {} (count={})",
+                        timeframe, entry.tradingSymbol(), symbolId, seedCandles.size());
+            } catch (UpstoxMarketDataException e) {
+                String message = toUserFriendlyError(e);
+                errors.add(timeframe + ": " + message);
+                log.error("Seed failed for {} {}: {}", symbolId, timeframe, message);
+            } catch (Exception e) {
+                String message = e.getMessage() != null ? e.getMessage() : e.toString();
+                errors.add(timeframe + ": " + message);
+                log.error("Seed failed for {} {}: {}", symbolId, timeframe, message);
+            }
+        }
+
+        if (isCancelled(symbolId)) {
+            log.info("Bootstrap cancelled for {} before status write", symbolId);
+            return BootstrapSymbolResult.cancelled(symbolId);
+        }
+
+        if (seededTfCount >= 1) {
+            updateBootstrapStatus(symbolId, SymbolBootstrapStatus.READY, null);
+            log.info("Symbol READY: {} ({} TF(s) seeded, candles≈{})",
+                    entry.tradingSymbol(), seededTfCount, candleCount);
+            return BootstrapSymbolResult.ready(symbolId, seededTfCount, candleCount);
+        }
+
+        String error = errors.isEmpty()
+                ? "No timeframes seeded"
+                : String.join("; ", errors);
+        updateBootstrapStatus(symbolId, SymbolBootstrapStatus.FAILED, error);
+        log.error("Symbol FAILED: {} — {}", entry.tradingSymbol(), error);
+        return BootstrapSymbolResult.failed(symbolId, error);
+    }
+
+    private void connectLiveFeedForActive() {
         if (!liveFeedEnabled) {
             log.info("Live feed disabled (tip.market.live-feed-enabled=false)");
             marketStatusService.setLiveFeedConnected(false);
             return;
         }
 
-        marketDataProvider.connectLiveFeed(
-                instrumentKey,
-                tick -> candleEngine.processTick(tick, timeframe)
-        );
+        // Prefer all public-active keys (including FAILED) so ticks can still arrive post seed issues.
+        Set<String> keys = watchlistRepository.findAllActive().stream()
+                .map(WatchlistEntry::symbolId)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        if (keys.isEmpty()) {
+            log.warn("No active instrument keys for live feed");
+            return;
+        }
+
+        List<String> timeframes = marketProperties.supportedTimeframes();
+        marketDataProvider.connectLiveFeed(keys, tick -> {
+            for (String timeframe : timeframes) {
+                try {
+                    candleEngine.processTick(tick, timeframe);
+                } catch (Exception e) {
+                    log.debug("processTick failed for {} {}: {}",
+                            tick.instrumentKey(), timeframe, e.toString());
+                }
+            }
+        });
+    }
+
+    private boolean isCancelled(String symbolId) {
+        Optional<WatchlistEntry> current = watchlistRepository.findBySymbolId(symbolId);
+        if (current.isEmpty()) {
+            return true;
+        }
+        return current.get().bootstrapStatus() == SymbolBootstrapStatus.REMOVING;
+    }
+
+    private void updateBootstrapStatus(String symbolId, SymbolBootstrapStatus status, String error) {
+        Optional<WatchlistEntry> current = watchlistRepository.findBySymbolId(symbolId);
+        if (current.isEmpty()) {
+            return;
+        }
+        WatchlistEntry e = current.get();
+        if (e.bootstrapStatus() == SymbolBootstrapStatus.REMOVING) {
+            return;
+        }
+        watchlistRepository.save(new WatchlistEntry(
+                e.symbolId(),
+                e.tradingSymbol(),
+                e.exchange(),
+                e.segment(),
+                e.instrumentType(),
+                e.displayName(),
+                e.addedAt(),
+                e.active(),
+                status,
+                error
+        ));
     }
 
     private List<Candle> loadSeedCandles(String instrumentKey, String timeframe) {
         List<Candle> intraday = marketDataProvider.fetchIntradayCandles(instrumentKey, timeframe);
-        logCandleSummary("Intraday (today)", intraday);
+        logCandleSummary("Intraday (today) " + timeframe, intraday);
 
         LocalDate toDate = LocalDate.now(CandleBoundaryUtils.NSE_ZONE).minusDays(1);
         LocalDate fromDate = toDate.minusDays(5);
         List<Candle> historical = marketDataProvider.fetchHistoricalCandles(
                 instrumentKey, timeframe, fromDate, toDate);
-        logCandleSummary("Historical", historical);
+        logCandleSummary("Historical " + timeframe, historical);
 
         return MarketSeedMerger.merge(historical, intraday);
     }
@@ -127,5 +265,29 @@ public class MarketBootstrapService {
                 candles.size(),
                 first.time(), first.close(),
                 last.time(), last.close());
+    }
+
+    /** Result of {@link #bootstrapSymbol(WatchlistEntry)}. */
+    public record BootstrapSymbolResult(
+            String symbolId,
+            SymbolBootstrapStatus status,
+            int seededTimeframeCount,
+            int seededCandleCount,
+            String error
+    ) {
+        static BootstrapSymbolResult ready(String symbolId, int tfCount, int candleCount) {
+            return new BootstrapSymbolResult(
+                    symbolId, SymbolBootstrapStatus.READY, tfCount, candleCount, null);
+        }
+
+        static BootstrapSymbolResult failed(String symbolId, String error) {
+            return new BootstrapSymbolResult(
+                    symbolId, SymbolBootstrapStatus.FAILED, 0, 0, error);
+        }
+
+        static BootstrapSymbolResult cancelled(String symbolId) {
+            return new BootstrapSymbolResult(
+                    symbolId, SymbolBootstrapStatus.REMOVING, 0, 0, "cancelled");
+        }
     }
 }

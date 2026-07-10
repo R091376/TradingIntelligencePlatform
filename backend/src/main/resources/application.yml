@@ -9,10 +9,11 @@ tip:
   upstox:
     access-token: ${UPSTOX_ACCESS_TOKEN:}
   market:
-    # Compat defaults: match first seed (NIFTY 50 index) for chart continuity
+    # Compat defaults: match first seed (NIFTY 50 index) for chart continuity (KD14)
     default-symbol: "Nifty 50"
     default-instrument-key: "NSE_INDEX|Nifty 50"
     default-timeframe: 5m
+    supported-timeframes: [1m, 5m, 15m, 1h, 4h, 1d]
     live-feed-enabled: true
     candle-update-throttle-ms: 1000
   watchlist:

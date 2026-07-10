@@ -14,10 +14,22 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
+/**
+ * Long-lived Upstox Market Data Feed V3 client (KD23).
+ * <p>
+ * One {@link MarketDataStreamerV3} per process while the live feed is enabled.
+ * Dynamic add/remove uses {@code subscribe}/{@code unsubscribe} only — never
+ * disconnect+recreate per instrument. Local {@link #subscribedKeys} is the
+ * source of truth; any new streamer is constructed with the full local set.
+ */
 @Component
 public class UpstoxFeedClient {
 
@@ -25,9 +37,13 @@ public class UpstoxFeedClient {
 
     private final ApiClient apiClient;
     private final MarketStatusService marketStatusService;
-    private MarketDataStreamerV3 streamer;
-    private TickHandler tickHandler;
+
+    private final Set<String> subscribedKeys = ConcurrentHashMap.newKeySet();
     private final AtomicLong tickCount = new AtomicLong();
+
+    private final Object lock = new Object();
+    private MarketDataStreamerV3 streamer;
+    private volatile TickHandler tickHandler;
     private volatile boolean marketInfoLogged;
 
     public UpstoxFeedClient(ApiClient apiClient, MarketStatusService marketStatusService) {
@@ -35,23 +51,154 @@ public class UpstoxFeedClient {
         this.marketStatusService = marketStatusService;
     }
 
-    public void connect(String instrumentKey, TickHandler handler) {
+    /**
+     * Ensure a streamer is connected and subscribed to {@code instrumentKeys}.
+     * If already live, only subscribes missing keys (no reconnect).
+     */
+    public void connect(Set<String> instrumentKeys, TickHandler handler) {
         if (handler == null) {
             throw new IllegalArgumentException("Tick handler is required");
         }
+        Objects.requireNonNull(instrumentKeys, "instrumentKeys");
 
-        disconnect();
-        this.tickHandler = handler;
-        this.tickCount.set(0);
-        this.marketInfoLogged = false;
+        synchronized (lock) {
+            this.tickHandler = handler;
 
-        streamer = new MarketDataStreamerV3(apiClient, Set.of(instrumentKey), Mode.FULL);
+            if (streamer != null) {
+                Set<String> missing = new HashSet<>(instrumentKeys);
+                missing.removeAll(subscribedKeys);
+                if (!missing.isEmpty()) {
+                    subscribeInternal(missing);
+                }
+                return;
+            }
+
+            tickCount.set(0);
+            marketInfoLogged = false;
+            subscribedKeys.clear();
+            subscribedKeys.addAll(instrumentKeys);
+            createAndConnectStreamer();
+        }
+    }
+
+    /** Convenience for single-key connect. */
+    public void connect(String instrumentKey, TickHandler handler) {
+        connect(Set.of(instrumentKey), handler);
+    }
+
+    /**
+     * Add keys to the local set and, if the streamer is live, subscribe without recreate.
+     */
+    public void subscribe(Set<String> instrumentKeys) {
+        if (instrumentKeys == null || instrumentKeys.isEmpty()) {
+            return;
+        }
+        synchronized (lock) {
+            subscribeInternal(instrumentKeys);
+        }
+    }
+
+    public void subscribe(String instrumentKey) {
+        if (instrumentKey == null || instrumentKey.isBlank()) {
+            return;
+        }
+        subscribe(Set.of(instrumentKey));
+    }
+
+    /**
+     * Remove keys from the local set and, if the streamer is live, unsubscribe without recreate.
+     * Streamer stays connected even if the last key is removed (idle) so the next add is cheap.
+     */
+    public void unsubscribe(Set<String> instrumentKeys) {
+        if (instrumentKeys == null || instrumentKeys.isEmpty()) {
+            return;
+        }
+        synchronized (lock) {
+            Set<String> toRemove = new HashSet<>(instrumentKeys);
+            toRemove.retainAll(subscribedKeys);
+            if (toRemove.isEmpty()) {
+                return;
+            }
+            subscribedKeys.removeAll(toRemove);
+            if (streamer != null) {
+                try {
+                    streamer.unsubscribe(Set.copyOf(toRemove));
+                    log.info("Upstox live feed unsubscribed: {}", toRemove);
+                } catch (Exception e) {
+                    log.warn("Upstox unsubscribe failed for {}: {}", toRemove, e.toString());
+                }
+            }
+        }
+    }
+
+    public void unsubscribe(String instrumentKey) {
+        if (instrumentKey == null || instrumentKey.isBlank()) {
+            return;
+        }
+        unsubscribe(Set.of(instrumentKey));
+    }
+
+    /**
+     * Full shutdown: disconnect streamer and clear local subscription set.
+     */
+    public void disconnect() {
+        synchronized (lock) {
+            if (streamer != null) {
+                try {
+                    streamer.disconnect();
+                } catch (Exception e) {
+                    log.debug("Upstox disconnect error: {}", e.toString());
+                }
+                streamer = null;
+            }
+            subscribedKeys.clear();
+            tickHandler = null;
+            marketStatusService.setLiveFeedConnected(false);
+        }
+    }
+
+    /** Snapshot of keys TIP wants subscribed (source of truth). */
+    public Set<String> subscribedKeys() {
+        return Collections.unmodifiableSet(new HashSet<>(subscribedKeys));
+    }
+
+    public long tickCount() {
+        return tickCount.get();
+    }
+
+    public boolean isStreamerLive() {
+        synchronized (lock) {
+            return streamer != null;
+        }
+    }
+
+    private void subscribeInternal(Set<String> keys) {
+        Set<String> toAdd = new HashSet<>();
+        for (String key : keys) {
+            if (key != null && !key.isBlank() && subscribedKeys.add(key)) {
+                toAdd.add(key);
+            }
+        }
+        if (toAdd.isEmpty() || streamer == null) {
+            return;
+        }
+        try {
+            streamer.subscribe(Set.copyOf(toAdd), Mode.FULL);
+            log.info("Upstox live feed subscribed: {}", toAdd);
+        } catch (Exception e) {
+            log.warn("Upstox subscribe failed for {}: {}", toAdd, e.toString());
+        }
+    }
+
+    private void createAndConnectStreamer() {
+        // Local set is source of truth on (re)build (KD23).
+        streamer = new MarketDataStreamerV3(apiClient, Set.copyOf(subscribedKeys), Mode.FULL);
 
         streamer.setOnOpenListener(new OnOpenListener() {
             @Override
             public void onOpen() {
                 marketStatusService.setLiveFeedConnected(true);
-                log.info("Upstox live feed connected for {}", instrumentKey);
+                log.info("Upstox live feed connected for keys={}", subscribedKeys());
             }
         });
 
@@ -95,19 +242,6 @@ public class UpstoxFeedClient {
         streamer.connect();
     }
 
-    public void disconnect() {
-        if (streamer != null) {
-            streamer.disconnect();
-            streamer = null;
-        }
-        tickHandler = null;
-        marketStatusService.setLiveFeedConnected(false);
-    }
-
-    public long tickCount() {
-        return tickCount.get();
-    }
-
     private void handleMarketUpdate(MarketUpdateV3 update) {
         if (update.getType() == MarketUpdateV3.Type.market_info) {
             if (update.getMarketInfo() != null) {
@@ -116,7 +250,7 @@ public class UpstoxFeedClient {
                 );
                 if (!marketInfoLogged) {
                     marketInfoLogged = true;
-                    log.info("NSE_EQ market phase: {}", marketStatusService.getMarketPhase());
+                    log.info("Market phase from feed: {}", marketStatusService.getMarketPhase());
                 }
             }
             return;
@@ -126,10 +260,11 @@ public class UpstoxFeedClient {
             return;
         }
 
+        TickHandler handler = tickHandler;
         for (Map.Entry<String, MarketUpdateV3.Feed> entry : update.getFeeds().entrySet()) {
             Tick tick = extractTick(entry.getKey(), entry.getValue());
-            if (tick != null && tickHandler != null) {
-                tickHandler.onTick(tick);
+            if (tick != null && handler != null) {
+                handler.onTick(tick);
                 long count = tickCount.incrementAndGet();
                 if (count <= 3 || count % 200 == 0) {
                     log.debug("Tick #{}: {} ltp={} vtt={}",
