@@ -15,6 +15,7 @@
   padding: 16px 20px;
   border-bottom: 1px solid #1e2433;
   background: #0f1117;
+  flex-wrap: wrap;
 }
 
 .chart-header__title {
@@ -31,6 +32,196 @@
   color: #f1f5f9;
   letter-spacing: -0.02em;
 }
+
+.chart-header__controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* ── Symbol switcher ─────────────────────────────────────────────────── */
+
+.symbol-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.symbol-switcher__label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.symbol-switcher__select {
+  appearance: none;
+  background: #1a2030;
+  border: 1px solid #2a3144;
+  border-radius: 8px;
+  color: #f1f5f9;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+  padding: 6px 28px 6px 12px;
+  cursor: pointer;
+  max-width: 16rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2394a3b8' d='M3 4.5L6 8l3-3.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+}
+
+.symbol-switcher__select:hover:not(:disabled) {
+  border-color: #3b4660;
+}
+
+.symbol-switcher__select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.symbol-switcher__badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 3px 8px;
+  border-radius: 999px;
+  text-transform: uppercase;
+}
+
+.badge-ready {
+  background: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.35);
+}
+
+.badge-pending {
+  background: rgba(234, 179, 8, 0.15);
+  color: #facc15;
+  border: 1px solid rgba(234, 179, 8, 0.35);
+}
+
+.badge-failed {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+}
+
+.badge-unknown {
+  background: rgba(100, 116, 139, 0.15);
+  color: #94a3b8;
+  border: 1px solid rgba(100, 116, 139, 0.35);
+}
+
+.symbol-switcher__add {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.symbol-switcher__input {
+  background: #1a2030;
+  border: 1px solid #2a3144;
+  border-radius: 8px;
+  color: #f1f5f9;
+  font: inherit;
+  font-size: 0.8125rem;
+  padding: 6px 10px;
+  width: 8.5rem;
+}
+
+.symbol-switcher__input::placeholder {
+  color: #64748b;
+}
+
+.symbol-switcher__input:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+
+.symbol-switcher__input:disabled {
+  opacity: 0.5;
+}
+
+.symbol-switcher__btn {
+  border: 1px solid #2a3144;
+  background: #1a2030;
+  color: #e2e8f0;
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.symbol-switcher__btn:hover:not(:disabled) {
+  background: #243049;
+  color: #f8fafc;
+}
+
+.symbol-switcher__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.symbol-switcher__btn--danger {
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.35);
+}
+
+.symbol-switcher__btn--danger:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.12);
+  color: #fecaca;
+}
+
+/* ── Timeframe selector ──────────────────────────────────────────────── */
+
+.timeframe-selector {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 8px;
+  background: #1a2030;
+  border: 1px solid #2a3144;
+  flex-wrap: wrap;
+}
+
+.timeframe-selector button {
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  min-width: 2.25rem;
+}
+
+.timeframe-selector button:hover:not(:disabled) {
+  color: #e2e8f0;
+}
+
+.timeframe-selector button.active {
+  background: #243049;
+  color: #f8fafc;
+}
+
+.timeframe-selector button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Chart type toggle ───────────────────────────────────────────────── */
 
 .chart-type-toggle {
   display: inline-flex;
@@ -60,6 +251,8 @@
   background: #243049;
   color: #f8fafc;
 }
+
+/* ── Connection status ───────────────────────────────────────────────── */
 
 .connection-status {
   display: inline-flex;
