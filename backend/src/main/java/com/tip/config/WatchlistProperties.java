@@ -30,5 +30,15 @@ public record WatchlistProperties(
         if (hardMaxSize <= 0) {
             hardMaxSize = 50;
         }
+        // Soft warn must not exceed the hard product cap.
+        if (softWarnSize > hardMaxSize) {
+            softWarnSize = hardMaxSize;
+        }
+        // Startup seed list cannot exceed the hard cap (fail fast on misconfiguration).
+        if (seedSymbols.size() > hardMaxSize) {
+            throw new IllegalArgumentException(
+                    "tip.watchlist.seed-symbols size (" + seedSymbols.size()
+                            + ") exceeds hard-max-size (" + hardMaxSize + ")");
+        }
     }
 }

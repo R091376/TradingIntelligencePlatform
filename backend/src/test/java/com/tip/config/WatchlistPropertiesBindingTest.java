@@ -4,13 +4,30 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 
+import java.util.List;
+import java.util.Map;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @SpringBootTest
 class WatchlistPropertiesBindingTest {
+
+    private static final List<String> EXPECTED_SEED_SYMBOLS = List.of(
+            "Nifty 50",
+            "RELIANCE",
+            "TCS",
+            "HDFCBANK",
+            "INFY",
+            "ICICIBANK",
+            "HINDUNILVR",
+            "ITC",
+            "SBIN",
+            "BHARTIARTL"
+    );
 
     @Autowired
     private WatchlistProperties watchlistProperties;
@@ -24,10 +41,7 @@ class WatchlistPropertiesBindingTest {
     @Test
     void watchlistProperties_bindSeedListAndCaps() {
         assertNotNull(watchlistProperties);
-        assertEquals(10, watchlistProperties.seedSymbols().size());
-        assertEquals("Nifty 50", watchlistProperties.seedSymbols().get(0));
-        assertEquals("RELIANCE", watchlistProperties.seedSymbols().get(1));
-        assertEquals("BHARTIARTL", watchlistProperties.seedSymbols().get(9));
+        assertEquals(EXPECTED_SEED_SYMBOLS, watchlistProperties.seedSymbols());
         assertEquals("NSE_INDEX|Nifty 50",
                 watchlistProperties.seedInstrumentKeys().get("Nifty 50"));
         assertEquals(40, watchlistProperties.softWarnSize());
@@ -47,5 +61,24 @@ class WatchlistPropertiesBindingTest {
     void marketDefaults_matchNifty50IndexSeed() {
         assertEquals("Nifty 50", marketProperties.defaultSymbol());
         assertEquals("NSE_INDEX|Nifty 50", marketProperties.defaultInstrumentKey());
+    }
+
+    @Test
+    void watchlistProperties_clampsSoftWarnAboveHardMax() {
+        WatchlistProperties props = new WatchlistProperties(
+                List.of("RELIANCE"),
+                Map.of(),
+                60,
+                50
+        );
+        assertEquals(50, props.hardMaxSize());
+        assertEquals(50, props.softWarnSize());
+    }
+
+    @Test
+    void watchlistProperties_rejectsSeedLargerThanHardMax() {
+        List<String> seeds = List.of("A", "B", "C");
+        assertThrows(IllegalArgumentException.class,
+                () -> new WatchlistProperties(seeds, Map.of(), 2, 2));
     }
 }

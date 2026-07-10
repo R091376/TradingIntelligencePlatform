@@ -15,6 +15,11 @@ import java.util.Optional;
  *   <li><b>Internal</b> APIs may still see REMOVING rows until hard-delete:
  *       {@link #findBySymbolId(String)}</li>
  * </ul>
+ * <p>
+ * <b>Trading-symbol uniqueness (service invariant):</b> callers (e.g. WatchlistService)
+ * must ensure at most one non-REMOVING entry per trading symbol (case-insensitive).
+ * The in-memory trading-symbol index is last-writer-wins; the repository does not
+ * enforce uniqueness so that internal status updates can replace by {@code symbolId}.
  */
 public interface WatchlistRepository {
 
@@ -48,6 +53,9 @@ public interface WatchlistRepository {
     /**
      * Insert or replace. On first insert, appends in insertion order.
      * On update: does not reorder map position and does not rewrite {@code addedAt}.
+     * <p>
+     * Requires non-blank {@code symbolId} and {@code tradingSymbol}.
+     * Does not enforce unique trading symbols — see type-level uniqueness invariant.
      */
     WatchlistEntry save(WatchlistEntry entry);
 

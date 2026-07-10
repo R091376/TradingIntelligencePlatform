@@ -14,8 +14,12 @@ import java.util.Optional;
 /**
  * Thread-safe ordered watchlist store backed by a {@link LinkedHashMap}.
  * <p>
- * Insertion order defines primary ({@link #findPrimary()}); {@code addedAt} is set on first
- * insert only and is never used to reorder.
+ * Insertion order defines primary ({@link #findPrimary()}) and is never derived from
+ * {@code addedAt}. On update, existing {@code addedAt} and map position are preserved;
+ * callers supply {@code addedAt} on first insert.
+ * <p>
+ * Trading-symbol index is last-writer-wins; uniqueness among non-REMOVING entries is a
+ * service-layer invariant (see {@link WatchlistRepository}).
  */
 @Component
 @Primary
@@ -92,6 +96,13 @@ public class InMemoryWatchlistRepository implements WatchlistRepository {
         Objects.requireNonNull(entry, "entry");
         Objects.requireNonNull(entry.symbolId(), "symbolId");
         Objects.requireNonNull(entry.tradingSymbol(), "tradingSymbol");
+        if (entry.symbolId().isBlank()) {
+            throw new IllegalArgumentException("symbolId must not be blank");
+        }
+        String newKey = normalizeTradingSymbol(entry.tradingSymbol());
+        if (newKey == null || newKey.isEmpty()) {
+            throw new IllegalArgumentException("tradingSymbol must not be blank");
+        }
 
         synchronized (lock) {
             WatchlistEntry existing = byId.get(entry.symbolId());
@@ -111,8 +122,7 @@ public class InMemoryWatchlistRepository implements WatchlistRepository {
                         entry.bootstrapError()
                 );
                 String oldKey = normalizeTradingSymbol(existing.tradingSymbol());
-                String newKey = normalizeTradingSymbol(toStore.tradingSymbol());
-                if (oldKey != null && !oldKey.equals(newKey)) {
+                if (oldKey != null && !oldKey.isEmpty() && !oldKey.equals(newKey)) {
                     String indexed = tradingSymbolIndex.get(oldKey);
                     if (entry.symbolId().equals(indexed)) {
                         tradingSymbolIndex.remove(oldKey);
@@ -122,7 +132,7 @@ public class InMemoryWatchlistRepository implements WatchlistRepository {
                 toStore = entry;
             }
             byId.put(toStore.symbolId(), toStore);
-            tradingSymbolIndex.put(normalizeTradingSymbol(toStore.tradingSymbol()), toStore.symbolId());
+            tradingSymbolIndex.put(newKey, toStore.symbolId());
             return toStore;
         }
     }

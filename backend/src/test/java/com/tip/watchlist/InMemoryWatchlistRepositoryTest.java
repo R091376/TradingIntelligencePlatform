@@ -15,6 +15,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class InMemoryWatchlistRepositoryTest {
@@ -31,6 +32,15 @@ class InMemoryWatchlistRepositoryTest {
             String tradingSymbol,
             Instant addedAt,
             SymbolBootstrapStatus status) {
+        return entry(symbolId, tradingSymbol, addedAt, status, true);
+    }
+
+    private static WatchlistEntry entry(
+            String symbolId,
+            String tradingSymbol,
+            Instant addedAt,
+            SymbolBootstrapStatus status,
+            boolean active) {
         return new WatchlistEntry(
                 symbolId,
                 tradingSymbol,
@@ -39,7 +49,7 @@ class InMemoryWatchlistRepositoryTest {
                 symbolId.startsWith("NSE_INDEX") ? "INDEX" : "EQ",
                 tradingSymbol,
                 addedAt,
-                true,
+                active,
                 status,
                 null
         );
@@ -100,6 +110,26 @@ class InMemoryWatchlistRepositoryTest {
     }
 
     @Test
+    void inactive_excludedFromPublicApis_butVisibleToFindBySymbolId() {
+        Instant t = Instant.parse("2026-07-10T10:00:00Z");
+        repo.save(entry("NSE_EQ|RELIANCE", "RELIANCE", t, SymbolBootstrapStatus.READY, false));
+        repo.save(entry("NSE_EQ|TCS", "TCS", t, SymbolBootstrapStatus.READY, true));
+
+        assertFalse(repo.containsSymbolId("NSE_EQ|RELIANCE"));
+        assertTrue(repo.containsSymbolId("NSE_EQ|TCS"));
+        assertEquals(1, repo.countActive());
+        assertEquals(List.of("NSE_EQ|TCS"),
+                repo.findAllActive().stream().map(WatchlistEntry::symbolId).toList());
+        assertEquals("NSE_EQ|TCS", repo.findPrimary().orElseThrow().symbolId());
+        assertTrue(repo.findByTradingSymbolIgnoreCase("RELIANCE").isEmpty());
+
+        Optional<WatchlistEntry> inactive = repo.findBySymbolId("NSE_EQ|RELIANCE");
+        assertTrue(inactive.isPresent());
+        assertFalse(inactive.get().active());
+        assertEquals(SymbolBootstrapStatus.READY, inactive.get().bootstrapStatus());
+    }
+
+    @Test
     void save_updatePreservesAddedAtAndMapPosition() {
         Instant firstAdded = Instant.parse("2026-07-10T09:00:00Z");
         Instant ignored = Instant.parse("2026-07-10T11:00:00Z");
@@ -124,6 +154,58 @@ class InMemoryWatchlistRepositoryTest {
                 List.of("NSE_INDEX|Nifty 50", "NSE_EQ|RELIANCE"),
                 repo.findAllActive().stream().map(WatchlistEntry::symbolId).toList()
         );
+    }
+
+    @Test
+    void save_renameTradingSymbol_rekeysIndexAndPreservesOrderAndAddedAt() {
+        Instant aAdded = Instant.parse("2026-07-10T09:00:00Z");
+        Instant bAdded = Instant.parse("2026-07-10T10:00:00Z");
+        Instant ignored = Instant.parse("2026-07-10T12:00:00Z");
+
+        repo.save(entry("NSE_EQ|RELIANCE", "RELIANCE", aAdded, SymbolBootstrapStatus.READY));
+        repo.save(entry("NSE_EQ|TCS", "TCS", bAdded, SymbolBootstrapStatus.READY));
+
+        WatchlistEntry renamed = repo.save(entry(
+                "NSE_EQ|RELIANCE",
+                "RELIANCE-NEW",
+                ignored,
+                SymbolBootstrapStatus.READY
+        ));
+
+        assertEquals(aAdded, renamed.addedAt());
+        assertEquals("RELIANCE-NEW", renamed.tradingSymbol());
+
+        assertTrue(repo.findByTradingSymbolIgnoreCase("RELIANCE").isEmpty());
+        assertTrue(repo.findByTradingSymbolIgnoreCase("RELIANCE-NEW").isPresent());
+        assertEquals("NSE_EQ|RELIANCE",
+                repo.findByTradingSymbolIgnoreCase("reliance-new").orElseThrow().symbolId());
+        assertTrue(repo.findByTradingSymbolIgnoreCase("TCS").isPresent());
+
+        assertEquals(
+                List.of("NSE_EQ|RELIANCE", "NSE_EQ|TCS"),
+                repo.findAllActive().stream().map(WatchlistEntry::symbolId).toList()
+        );
+        assertEquals("NSE_EQ|RELIANCE", repo.findPrimary().orElseThrow().symbolId());
+    }
+
+    @Test
+    void save_rejectsBlankSymbolIdAndTradingSymbol() {
+        Instant t = Instant.parse("2026-07-10T10:00:00Z");
+
+        assertThrows(IllegalArgumentException.class,
+                () -> repo.save(entry("  ", "RELIANCE", t, SymbolBootstrapStatus.READY)));
+        assertThrows(IllegalArgumentException.class,
+                () -> repo.save(entry("NSE_EQ|RELIANCE", "   ", t, SymbolBootstrapStatus.READY)));
+        assertThrows(NullPointerException.class,
+                () -> repo.save(new WatchlistEntry(
+                        null, "RELIANCE", "NSE", "NSE_EQ", "EQ", "RELIANCE",
+                        t, true, SymbolBootstrapStatus.READY, null)));
+        assertThrows(NullPointerException.class,
+                () -> repo.save(new WatchlistEntry(
+                        "NSE_EQ|RELIANCE", null, "NSE", "NSE_EQ", "EQ", "RELIANCE",
+                        t, true, SymbolBootstrapStatus.READY, null)));
+
+        assertEquals(0, repo.countActive());
     }
 
     @Test
