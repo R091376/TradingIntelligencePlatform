@@ -10,7 +10,23 @@ public final class TimeframeParser {
     private TimeframeParser() {
     }
 
+    /**
+     * @param unit     Upstox unit: {@code minutes}, {@code hours}, {@code days}
+     * @param interval Upstox interval integer for that unit (e.g. 15 with minutes, 4 with hours)
+     */
     public record TimeframeSpec(String unit, int interval) {
+        /**
+         * Candle length in minutes for in-memory boundary flooring / live engine.
+         * Distinct from {@link #interval()}, which is the raw Upstox path parameter.
+         */
+        public int intervalMinutes() {
+            return switch (unit) {
+                case "minutes" -> interval;
+                case "hours" -> Math.multiplyExact(interval, 60);
+                case "days" -> Math.multiplyExact(interval, 24 * 60);
+                default -> throw new IllegalArgumentException("Unsupported unit: " + unit);
+            };
+        }
     }
 
     public static TimeframeSpec parse(String timeframe) {

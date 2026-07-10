@@ -1,16 +1,9 @@
-import { useState } from 'react'
-
-function statusClass(status) {
-  const s = (status || '').toString().toUpperCase()
-  if (s === 'READY') return 'badge-ready'
-  if (s === 'PENDING') return 'badge-pending'
-  if (s === 'FAILED') return 'badge-failed'
-  return 'badge-unknown'
-}
+import { useMemo, useState } from 'react'
+import InstrumentSearch from './InstrumentSearch'
+import WatchlistBar from './WatchlistBar'
 
 /**
- * Thin watchlist-driven symbol switcher (KD25).
- * Select among watchlist entries; optional add + remove for active.
+ * Right-side watchlist panel: search + vertical list with per-row remove.
  */
 export default function SymbolSwitcher({
   watchlist,
@@ -20,90 +13,58 @@ export default function SymbolSwitcher({
   onRemove,
   disabled,
   adding,
+  hardMax = 50,
 }) {
-  const [draft, setDraft] = useState('')
+  const [removingId, setRemovingId] = useState(null)
 
-  const active = watchlist?.find((e) => e.symbolId === activeSymbolId) ?? null
-  const badge = active?.bootstrapStatus ?? null
+  const watchlistKeys = useMemo(
+    () => new Set((watchlist || []).map((e) => e.symbolId)),
+    [watchlist],
+  )
 
-  async function handleAdd(e) {
-    e.preventDefault()
-    const symbol = draft.trim()
-    if (!symbol || adding || disabled) return
+  async function handleRemove(symbolId) {
+    if (!symbolId || disabled || adding) return
+    setRemovingId(symbolId)
     try {
-      await onAdd(symbol)
-      setDraft('')
-    } catch {
-      // parent surfaces error banner
+      await onRemove(symbolId)
+    } finally {
+      setRemovingId(null)
     }
   }
 
+  const count = watchlist?.length ?? 0
+
   return (
-    <div className="symbol-switcher">
-      <label className="symbol-switcher__label" htmlFor="symbol-select">
-        Symbol
-      </label>
-      <select
-        id="symbol-select"
-        className="symbol-switcher__select"
-        value={activeSymbolId || ''}
-        disabled={disabled || !watchlist?.length}
-        onChange={(e) => onSelect(e.target.value)}
-      >
-        {!watchlist?.length && <option value="">No symbols</option>}
-        {watchlist?.map((entry) => (
-          <option key={entry.symbolId} value={entry.symbolId}>
-            {entry.tradingSymbol || entry.displayName || entry.symbolId}
-            {entry.bootstrapStatus && entry.bootstrapStatus !== 'READY'
-              ? ` (${entry.bootstrapStatus})`
-              : ''}
-          </option>
-        ))}
-      </select>
-
-      {badge && (
-        <span
-          className={`symbol-switcher__badge ${statusClass(badge)}`}
-          title={
-            active?.bootstrapError
-              ? active.bootstrapError
-              : `Bootstrap: ${badge}`
-          }
-        >
-          {String(badge).toUpperCase()}
+    <aside className="watchlist-sidebar" aria-label="Watchlist sidebar">
+      <div className="watchlist-sidebar__header">
+        <h2 className="watchlist-sidebar__title">Watchlist</h2>
+        <span className="watchlist-sidebar__count">
+          {count}/{hardMax}
         </span>
-      )}
+      </div>
 
-      <form className="symbol-switcher__add" onSubmit={handleAdd}>
-        <input
-          type="text"
-          className="symbol-switcher__input"
-          placeholder="Add symbol…"
-          value={draft}
-          disabled={disabled || adding}
-          onChange={(e) => setDraft(e.target.value)}
-          aria-label="Trading symbol to add"
+      <div className="watchlist-sidebar__search">
+        <InstrumentSearch
+          onAdd={onAdd}
+          watchlistKeys={watchlistKeys}
+          hardMax={hardMax}
+          watchlistSize={count}
+          disabled={disabled}
+          adding={adding}
+          compact
         />
-        <button
-          type="submit"
-          className="symbol-switcher__btn"
-          disabled={disabled || adding || !draft.trim()}
-        >
-          {adding ? 'Adding…' : 'Add'}
-        </button>
-      </form>
+      </div>
 
-      {activeSymbolId && (
-        <button
-          type="button"
-          className="symbol-switcher__btn symbol-switcher__btn--danger"
+      <div className="watchlist-sidebar__list">
+        <WatchlistBar
+          watchlist={watchlist}
+          activeSymbolId={activeSymbolId}
+          onSelect={onSelect}
+          onRemove={handleRemove}
           disabled={disabled || adding}
-          onClick={() => onRemove(activeSymbolId)}
-          title="Remove active symbol from watchlist"
-        >
-          Remove
-        </button>
-      )}
-    </div>
+          removingId={removingId}
+        />
+      </div>
+    </aside>
   )
 }

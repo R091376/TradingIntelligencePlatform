@@ -241,13 +241,60 @@ public class MarketBootstrapService {
         List<Candle> intraday = marketDataProvider.fetchIntradayCandles(instrumentKey, timeframe);
         logCandleSummary("Intraday (today) " + timeframe, intraday);
 
+        // Historical window: [today - lookback, yesterday]. Today is covered by intraday.
+        // Previously hardcoded minusDays(5) ≈ 3 trading days of history — not multi-symbol related.
         LocalDate toDate = LocalDate.now(CandleBoundaryUtils.NSE_ZONE).minusDays(1);
-        LocalDate fromDate = toDate.minusDays(5);
-        List<Candle> historical = marketDataProvider.fetchHistoricalCandles(
-                instrumentKey, timeframe, fromDate, toDate);
-        logCandleSummary("Historical " + timeframe, historical);
+        int lookbackDays = marketProperties.lookbackDaysFor(timeframe);
+        LocalDate fromDate = toDate.minusDays(Math.max(1, lookbackDays) - 1L);
+        if (fromDate.isAfter(toDate)) {
+            fromDate = toDate;
+        }
+
+        List<Candle> historical = fetchHistoricalChunked(instrumentKey, timeframe, fromDate, toDate);
+        logCandleSummary(
+                "Historical " + timeframe + " [" + fromDate + " → " + toDate + "]",
+                historical);
 
         return MarketSeedMerger.merge(historical, intraday);
+    }
+
+    /**
+     * Upstox often caps candles per historical response (~1000–1500). Walk the
+     * date range in chunks and merge (dedupe by timestamp).
+     */
+    private List<Candle> fetchHistoricalChunked(
+            String instrumentKey,
+            String timeframe,
+            LocalDate fromDate,
+            LocalDate toDate
+    ) {
+        int chunkDays = Math.max(1, marketProperties.historicalChunkDaysFor(timeframe));
+        List<Candle> all = new ArrayList<>();
+        LocalDate chunkEnd = toDate;
+        int chunks = 0;
+        while (!chunkEnd.isBefore(fromDate)) {
+            LocalDate chunkStart = chunkEnd.minusDays(chunkDays - 1L);
+            if (chunkStart.isBefore(fromDate)) {
+                chunkStart = fromDate;
+            }
+            List<Candle> chunk = marketDataProvider.fetchHistoricalCandles(
+                    instrumentKey, timeframe, chunkStart, chunkEnd);
+            all.addAll(chunk);
+            chunks++;
+            log.debug(
+                    "Historical chunk {} {} {}→{} candles={}",
+                    timeframe, instrumentKey, chunkStart, chunkEnd, chunk.size());
+            if (chunkStart.equals(fromDate)) {
+                break;
+            }
+            chunkEnd = chunkStart.minusDays(1);
+        }
+        if (chunks > 1) {
+            log.debug(
+                    "Historical {} for {}: {} chunk(s), {} raw candles before merge",
+                    timeframe, instrumentKey, chunks, all.size());
+        }
+        return all;
     }
 
     private String toUserFriendlyError(UpstoxMarketDataException e) {

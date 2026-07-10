@@ -26,7 +26,7 @@ public class CandleEngine {
     }
 
     public void seed(String instrumentKey, String timeframe, List<Candle> candles) {
-        int intervalMinutes = TimeframeParser.parse(timeframe).interval();
+        int intervalMinutes = TimeframeParser.parse(timeframe).intervalMinutes();
         SymbolState state = stateFor(instrumentKey, timeframe);
 
         synchronized (state) {
@@ -55,7 +55,7 @@ public class CandleEngine {
     }
 
     public void processTick(Tick tick, String timeframe) {
-        int intervalMinutes = TimeframeParser.parse(timeframe).interval();
+        int intervalMinutes = TimeframeParser.parse(timeframe).intervalMinutes();
         SymbolState state = stateFor(tick.instrumentKey(), timeframe);
 
         synchronized (state) {

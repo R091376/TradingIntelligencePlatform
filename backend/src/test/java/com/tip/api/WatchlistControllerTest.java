@@ -16,7 +16,6 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.Instant;
 import java.util.List;
 
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
@@ -52,7 +51,7 @@ class WatchlistControllerTest {
 
     @Test
     void postAddReturns200WithReadyEntry() throws Exception {
-        when(watchlistService.add("TATASTEEL")).thenReturn(
+        when(watchlistService.add(eq("TATASTEEL"), eq(null))).thenReturn(
                 entry("NSE_EQ|INE081A01020", "TATASTEEL", SymbolBootstrapStatus.READY)
         );
 
@@ -65,8 +64,22 @@ class WatchlistControllerTest {
     }
 
     @Test
+    void postAddByInstrumentKeyReturns200() throws Exception {
+        when(watchlistService.add(eq(null), eq("NSE_EQ|INE002A01018"))).thenReturn(
+                entry("NSE_EQ|INE002A01018", "RELIANCE", SymbolBootstrapStatus.READY)
+        );
+
+        mockMvc.perform(post("/api/watchlist")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"instrumentKey\":\"NSE_EQ|INE002A01018\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tradingSymbol").value("RELIANCE"))
+                .andExpect(jsonPath("$.symbolId").value("NSE_EQ|INE002A01018"));
+    }
+
+    @Test
     void postAddDuplicateReturns409() throws Exception {
-        when(watchlistService.add("RELIANCE")).thenThrow(
+        when(watchlistService.add(eq("RELIANCE"), eq(null))).thenThrow(
                 new ResponseStatusException(HttpStatus.CONFLICT, "Symbol already on watchlist: RELIANCE")
         );
 
@@ -78,9 +91,8 @@ class WatchlistControllerTest {
 
     @Test
     void postAddAtHardMaxReturns409() throws Exception {
-        when(watchlistService.add(anyString())).thenThrow(
-                new ResponseStatusException(HttpStatus.CONFLICT, "Watchlist is full (max 50 symbols)")
-        );
+        when(watchlistService.add(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenThrow(new ResponseStatusException(HttpStatus.CONFLICT, "Watchlist is full (max 50 symbols)"));
 
         mockMvc.perform(post("/api/watchlist")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -90,7 +102,7 @@ class WatchlistControllerTest {
 
     @Test
     void postAddUnknownSymbolReturns404() throws Exception {
-        when(watchlistService.add("FOOBAR")).thenThrow(
+        when(watchlistService.add(eq("FOOBAR"), eq(null))).thenThrow(
                 new ResponseStatusException(HttpStatus.NOT_FOUND, "Unknown trading symbol: FOOBAR")
         );
 

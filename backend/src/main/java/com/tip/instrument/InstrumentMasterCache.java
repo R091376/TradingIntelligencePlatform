@@ -23,9 +23,13 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.zip.GZIPInputStream;
 
@@ -157,6 +161,89 @@ public class InstrumentMasterCache {
         throw new InstrumentNotFoundException(tradingSymbol);
     }
 
+    /**
+     * Lookup by Upstox {@code instrument_key} (e.g. {@code NSE_EQ|INE002A01018}).
+     *
+     * @return empty if key is blank or not in the master
+     */
+    public Optional<ResolvedInstrument> findByInstrumentKey(String instrumentKey) {
+        ensureLoaded();
+        if (instrumentKey == null || instrumentKey.isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(byInstrumentKey.get(instrumentKey.trim()));
+    }
+
+    /**
+     * Typeahead search over indexed EQ + INDEX instruments.
+     * <p>
+     * Ranking (best first): exact trading symbol → trading-symbol prefix → trading-symbol
+     * contains → display-name prefix → display-name contains. {@code BE} rows are skipped
+     * (EQ preferred). Query length under 2 returns empty. {@code limit} is clamped to 1..50.
+     */
+    public List<ResolvedInstrument> search(String query, int limit) {
+        ensureLoaded();
+        String q = normalize(query);
+        if (q.length() < 2) {
+            return List.of();
+        }
+        int lim = Math.min(50, Math.max(1, limit));
+
+        List<ScoredInstrument> scored = new ArrayList<>();
+        for (ResolvedInstrument instrument : byInstrumentKey.values()) {
+            if (TYPE_BE.equals(instrument.instrumentType())) {
+                continue;
+            }
+            int score = scoreMatch(q, instrument);
+            if (score >= 0) {
+                scored.add(new ScoredInstrument(instrument, score));
+            }
+        }
+
+        scored.sort(Comparator
+                .comparingInt(ScoredInstrument::score)
+                .thenComparing(s -> s.instrument().tradingSymbol(), String.CASE_INSENSITIVE_ORDER)
+                .thenComparing(s -> s.instrument().instrumentKey()));
+
+        List<ResolvedInstrument> out = new ArrayList<>(Math.min(lim, scored.size()));
+        for (int i = 0; i < scored.size() && out.size() < lim; i++) {
+            out.add(scored.get(i).instrument());
+        }
+        return List.copyOf(out);
+    }
+
+    /**
+     * @return match rank (lower better), or {@code -1} if no match
+     */
+    static int scoreMatch(String normalizedQuery, ResolvedInstrument instrument) {
+        String ts = normalize(instrument.tradingSymbol());
+        String dn = normalize(instrument.displayName());
+
+        if (!ts.isEmpty()) {
+            if (ts.equals(normalizedQuery)) {
+                return 0;
+            }
+            if (ts.startsWith(normalizedQuery)) {
+                return 1;
+            }
+            if (ts.contains(normalizedQuery)) {
+                return 2;
+            }
+        }
+        if (!dn.isEmpty()) {
+            if (dn.equals(normalizedQuery)) {
+                return 3;
+            }
+            if (dn.startsWith(normalizedQuery)) {
+                return 4;
+            }
+            if (dn.contains(normalizedQuery)) {
+                return 5;
+            }
+        }
+        return -1;
+    }
+
     /** Whether {@link #ensureLoaded()} has completed (successfully or with empty indexes). */
     public boolean isLoaded() {
         return loaded.get();
@@ -164,6 +251,9 @@ public class InstrumentMasterCache {
 
     public int size() {
         return byInstrumentKey.size();
+    }
+
+    private record ScoredInstrument(ResolvedInstrument instrument, int score) {
     }
 
     /**

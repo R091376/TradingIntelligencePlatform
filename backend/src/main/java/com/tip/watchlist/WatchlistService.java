@@ -118,21 +118,19 @@ public class WatchlistService {
     }
 
     /**
-     * Blocking add by trading symbol: resolve → hard-max reserve → PENDING →
-     * bootstrap (unlocked) → subscribe → return final entry (READY or FAILED).
+     * Blocking add by trading symbol only (compat wrapper).
      */
     public WatchlistEntry add(String tradingSymbol) {
-        String input = validateTradingSymbolInput(tradingSymbol);
+        return add(tradingSymbol, null);
+    }
 
-        ResolvedInstrument resolved;
-        try {
-            resolved = instrumentMasterCache.resolve(input);
-        } catch (InstrumentNotFoundException e) {
-            throw new ResponseStatusException(
-                    HttpStatus.NOT_FOUND,
-                    "Unknown trading symbol: " + input
-            );
-        }
+    /**
+     * Blocking add: resolve by {@code instrumentKey} (preferred) or trading {@code symbol} →
+     * hard-max reserve → PENDING → bootstrap (unlocked) → subscribe → return final entry
+     * (READY or FAILED).
+     */
+    public WatchlistEntry add(String tradingSymbol, String instrumentKey) {
+        ResolvedInstrument resolved = resolveForAdd(tradingSymbol, instrumentKey);
 
         String symbolId = resolved.instrumentKey();
         Object symbolLock = lockFor(symbolId);
@@ -348,6 +346,56 @@ public class WatchlistService {
 
     private Object lockFor(String symbolId) {
         return locks.computeIfAbsent(symbolId, k -> new Object());
+    }
+
+    private ResolvedInstrument resolveForAdd(String tradingSymbol, String instrumentKey) {
+        boolean hasKey = instrumentKey != null && !instrumentKey.isBlank();
+        boolean hasSymbol = tradingSymbol != null && !tradingSymbol.isBlank();
+
+        if (!hasKey && !hasSymbol) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "symbol or instrumentKey is required"
+            );
+        }
+
+        if (hasKey) {
+            String key = validateInstrumentKeyInput(instrumentKey);
+            return instrumentMasterCache.findByInstrumentKey(key)
+                    .orElseThrow(() -> new ResponseStatusException(
+                            HttpStatus.NOT_FOUND,
+                            "Unknown instrument key: " + key
+                    ));
+        }
+
+        String input = validateTradingSymbolInput(tradingSymbol);
+        try {
+            return instrumentMasterCache.resolve(input);
+        } catch (InstrumentNotFoundException e) {
+            throw new ResponseStatusException(
+                    HttpStatus.NOT_FOUND,
+                    "Unknown trading symbol: " + input
+            );
+        }
+    }
+
+    private static String validateInstrumentKeyInput(String instrumentKey) {
+        String trimmed = instrumentKey.trim();
+        if (trimmed.length() > 128) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "instrumentKey exceeds max length of 128"
+            );
+        }
+        for (int i = 0; i < trimmed.length(); i++) {
+            if (Character.isISOControl(trimmed.charAt(i))) {
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_REQUEST,
+                        "instrumentKey contains invalid characters"
+                );
+            }
+        }
+        return trimmed;
     }
 
     private static String validateTradingSymbolInput(String tradingSymbol) {

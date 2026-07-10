@@ -34,13 +34,18 @@ public class WatchlistController {
     }
 
     /**
-     * Blocking add by trading symbol. Returns 200 with final entry (READY or FAILED).
+     * Blocking add by trading symbol and/or instrument key.
+     * Returns 200 with final entry (READY or FAILED).
      * 404 unknown symbol; 409 duplicate or at hard max 50.
+     * <p>
+     * Body: {@code { "symbol": "RELIANCE" }} and/or
+     * {@code { "instrumentKey": "NSE_EQ|INE002A01018" }} (key wins when both set).
      */
     @PostMapping
     public WatchlistEntry add(@RequestBody AddWatchlistRequest request) {
         String symbol = request != null ? request.symbol() : null;
-        return watchlistService.add(symbol);
+        String instrumentKey = request != null ? request.instrumentKey() : null;
+        return watchlistService.add(symbol, instrumentKey);
     }
 
     /**

@@ -331,18 +331,35 @@ public class UpstoxFeedClient {
     }
 
     private Tick extractTick(String instrumentKey, MarketUpdateV3.Feed feed) {
-        if (feed.getFullFeed() != null && feed.getFullFeed().getMarketFF() != null) {
-            MarketUpdateV3.MarketFullFeed marketFeed = feed.getFullFeed().getMarketFF();
-            MarketUpdateV3.LTPC ltpc = marketFeed.getLtpc();
-            if (ltpc == null) {
-                return null;
+        if (feed.getFullFeed() != null) {
+            // Equities / F&O: fullFeed.marketFF
+            if (feed.getFullFeed().getMarketFF() != null) {
+                MarketUpdateV3.MarketFullFeed marketFeed = feed.getFullFeed().getMarketFF();
+                MarketUpdateV3.LTPC ltpc = marketFeed.getLtpc();
+                if (ltpc == null) {
+                    return null;
+                }
+                return new Tick(
+                        instrumentKey,
+                        ltpc.getLtp(),
+                        marketFeed.getVtt(),
+                        ltpc.getLtt()
+                );
             }
-            return new Tick(
-                    instrumentKey,
-                    ltpc.getLtp(),
-                    marketFeed.getVtt(),
-                    ltpc.getLtt()
-            );
+            // Indices (NSE_INDEX|…): fullFeed.indexFF — no order-book / vtt (volume 0)
+            if (feed.getFullFeed().getIndexFF() != null) {
+                MarketUpdateV3.IndexFullFeed indexFeed = feed.getFullFeed().getIndexFF();
+                MarketUpdateV3.LTPC ltpc = indexFeed.getLtpc();
+                if (ltpc == null) {
+                    return null;
+                }
+                return new Tick(
+                        instrumentKey,
+                        ltpc.getLtp(),
+                        0L,
+                        ltpc.getLtt()
+                );
+            }
         }
 
         if (feed.getFirstLevelWithGreeks() != null) {

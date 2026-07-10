@@ -16,6 +16,16 @@ tip:
     supported-timeframes: [1m, 5m, 15m, 1h, 4h, 1d]
     live-feed-enabled: true
     candle-update-throttle-ms: 1000
+    # Historical seed: calendar days ending yesterday (today = intraday API).
+    # Was hardcoded to 5 days (~3 trading sessions). Per-TF overrides below.
+    historical-lookback-days: 30
+    historical-lookback-days-by-timeframe:
+      1m: 10
+      5m: 60
+      15m: 90
+      1h: 180
+      4h: 365
+      1d: 730
   watchlist:
     # Startup seed = entire list (exactly 10): index first, then 9 top Nifty 50 equities.
     # Order matters: primary / default chart = first entry (NIFTY 50 index).

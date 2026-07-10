@@ -49,7 +49,9 @@ class MarketBootstrapServiceTest {
                 "Nifty 50",
                 "NSE_INDEX|Nifty 50",
                 "5m",
-                List.of("5m", "15m")
+                List.of("5m", "15m"),
+                null,
+                null
         );
         UpstoxProperties upstoxProperties = new UpstoxProperties("test-token");
 
@@ -167,7 +169,7 @@ class MarketBootstrapServiceTest {
     void recoverAllActive_tokenBlank_setsPendingThenFailsWithoutFetch() {
         UpstoxProperties blank = new UpstoxProperties("");
         MarketProperties marketProperties = new MarketProperties(
-                "Nifty 50", "NSE_INDEX|Nifty 50", "5m", List.of("5m"));
+                "Nifty 50", "NSE_INDEX|Nifty 50", "5m", List.of("5m"), null, null);
         service = new MarketBootstrapService(
                 marketDataProvider, candleEngine, marketProperties, blank,
                 marketStatusService, repository);

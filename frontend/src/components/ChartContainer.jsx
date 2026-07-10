@@ -53,6 +53,9 @@ function entryFailedMessage(entry) {
   return entry.bootstrapError || `Bootstrap failed for ${entry.tradingSymbol || entry.symbolId}`
 }
 
+/** Candle/bar width in px (LWC default ~6). Applied on create and after symbol/TF load. */
+const BAR_SPACING = 7
+
 /**
  * Chart container state machine (KD25):
  * load watchlist → pick primary → candles + WS for active symbolId
@@ -119,9 +122,25 @@ export default function ChartContainer() {
       : candles.map(toCandlestickPoint)
   }
 
-  function applySeriesData(series, type) {
+  /**
+   * Bulk-load series data. After setData, re-enable price autoScale so a manual
+   * price zoom on the previous symbol does not stick when switching stocks/TFs.
+   * Do NOT fitContent() over full history — that crushes barSpacing to min and
+   * makes candles look tiny. Keep spacing and scroll to the latest bars.
+   */
+  function applySeriesData(series, type, { resetView = true } = {}) {
     const candles = getSortedCandles()
     series.setData(mapSeriesData(type, candles))
+    if (resetView) {
+      // User zoom/scroll on the price scale turns autoScale off; restore it
+      // so the next symbol gets a full price range for its own data.
+      series.priceScale().applyOptions({ autoScale: true })
+      const chart = chartRef.current
+      if (chart && candles.length > 0) {
+        chart.timeScale().applyOptions({ barSpacing: BAR_SPACING })
+        chart.timeScale().scrollToRealTime()
+      }
+    }
   }
 
   function createSeries(chart, type) {
@@ -323,7 +342,9 @@ export default function ChartContainer() {
             borderColor: '#2a3144',
             timeVisible: true,
             secondsVisible: false,
-            barSpacing: 8,
+            // Wider than LWC default (~6); re-applied on each symbol/TF load
+            barSpacing: BAR_SPACING,
+            minBarSpacing: 2,
           },
           crosshair: {
             vertLine: { color: '#475569' },
@@ -644,13 +665,17 @@ export default function ChartContainer() {
     }
   }
 
-  // ── Add symbol ───────────────────────────────────────────────────────
-  async function handleAdd(tradingSymbol) {
+  // ── Add symbol (string trading symbol or { symbol, instrumentKey }) ───
+  async function handleAdd(input) {
     setAdding(true)
     setError(null)
     setInfoMessage('Adding & seeding…')
+    const label =
+      typeof input === 'string'
+        ? input
+        : input?.symbol || input?.instrumentKey || 'symbol'
     try {
-      const entry = await addSymbol(tradingSymbol)
+      const entry = await addSymbol(input)
       const refreshed = await fetchWatchlist()
       setWatchlist(refreshed)
       watchlistRef.current = refreshed
@@ -658,7 +683,7 @@ export default function ChartContainer() {
       if (normalizeStatus(entry.bootstrapStatus) === 'FAILED') {
         setError(
           entry.bootstrapError ||
-            `Failed to add ${entry.tradingSymbol || tradingSymbol}`,
+            `Failed to add ${entry.tradingSymbol || label}`,
         )
         setInfoMessage(null)
         return
@@ -719,15 +744,6 @@ export default function ChartContainer() {
           <ConnectionStatus status={connectionStatus} />
         </div>
         <div className="chart-header__controls">
-          <SymbolSwitcher
-            watchlist={watchlist}
-            activeSymbolId={activeSymbolId}
-            onSelect={handleSymbolChange}
-            onAdd={handleAdd}
-            onRemove={handleRemove}
-            disabled={loading}
-            adding={adding}
-          />
           <TimeframeSelector
             timeframes={timeframes}
             value={timeframe}
@@ -741,19 +757,30 @@ export default function ChartContainer() {
       {error && <div className="chart-error">{error}</div>}
       {!error && infoMessage && <div className="chart-info">{infoMessage}</div>}
 
-      <div className="chart-panel">
-        {(loading || switching || activeIsPending) && (
-          <div className="chart-loading">
-            {adding
-              ? 'Adding & seeding…'
-              : activeIsPending
-                ? 'Waiting for symbol bootstrap…'
-                : switching
-                  ? 'Loading symbol…'
-                  : 'Loading candles…'}
-          </div>
-        )}
-        <div ref={containerRef} className="chart-container" />
+      <div className="chart-body">
+        <div className="chart-panel">
+          {(loading || switching || activeIsPending) && (
+            <div className="chart-loading">
+              {adding
+                ? 'Adding & seeding…'
+                : activeIsPending
+                  ? 'Waiting for symbol bootstrap…'
+                  : switching
+                    ? 'Loading symbol…'
+                    : 'Loading candles…'}
+            </div>
+          )}
+          <div ref={containerRef} className="chart-container" />
+        </div>
+        <SymbolSwitcher
+          watchlist={watchlist}
+          activeSymbolId={activeSymbolId}
+          onSelect={handleSymbolChange}
+          onAdd={handleAdd}
+          onRemove={handleRemove}
+          disabled={loading}
+          adding={adding}
+        />
       </div>
     </div>
   )

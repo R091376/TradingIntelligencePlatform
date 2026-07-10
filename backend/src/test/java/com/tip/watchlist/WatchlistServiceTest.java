@@ -107,6 +107,44 @@ class WatchlistServiceTest {
     }
 
     @Test
+    void addByInstrumentKeySkipsTradingSymbolResolve() {
+        ResolvedInstrument resolved = new ResolvedInstrument(
+                "NSE_EQ|INE002A01018", "RELIANCE", "NSE", "NSE_EQ", "EQ", "Reliance", "INE002A01018"
+        );
+        when(instrumentMasterCache.findByInstrumentKey("NSE_EQ|INE002A01018"))
+                .thenReturn(Optional.of(resolved));
+        when(watchlistRepository.containsSymbolId(resolved.instrumentKey())).thenReturn(false);
+        when(watchlistRepository.findByTradingSymbolIgnoreCase("RELIANCE")).thenReturn(Optional.empty());
+        when(watchlistRepository.findBySymbolId(resolved.instrumentKey()))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(readyEntry(resolved)));
+        when(watchlistRepository.countActive()).thenReturn(3);
+        when(watchlistRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(marketBootstrapService.bootstrapSymbol(any(WatchlistEntry.class)))
+                .thenReturn(new MarketBootstrapService.BootstrapSymbolResult(
+                        resolved.instrumentKey(), SymbolBootstrapStatus.READY, 6, 50, null));
+
+        WatchlistEntry result = service.add(null, "NSE_EQ|INE002A01018");
+
+        assertThat(result.tradingSymbol()).isEqualTo("RELIANCE");
+        verify(instrumentMasterCache, never()).resolve(any());
+        verify(instrumentMasterCache).findByInstrumentKey("NSE_EQ|INE002A01018");
+    }
+
+    @Test
+    void addRequiresSymbolOrInstrumentKey() {
+        assertThatThrownBy(() -> service.add(null, null))
+                .isInstanceOf(ResponseStatusException.class)
+                .extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+                .isEqualTo(HttpStatus.BAD_REQUEST);
+
+        assertThatThrownBy(() -> service.add("  ", "  "))
+                .isInstanceOf(ResponseStatusException.class)
+                .extracting(ex -> ((ResponseStatusException) ex).getStatusCode())
+                .isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
     void addUnexpectedBootstrapExceptionMarksFailedAndReturnsEntry() {
         ResolvedInstrument resolved = new ResolvedInstrument(
                 "NSE_EQ|INE081A01020", "TATASTEEL", "NSE", "NSE_EQ", "EQ", "Tata Steel", null

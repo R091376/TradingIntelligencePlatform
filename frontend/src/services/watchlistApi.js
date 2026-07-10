@@ -48,15 +48,28 @@ export async function fetchWatchlist() {
 }
 
 /**
- * POST /api/watchlist — blocking add by trading symbol.
+ * POST /api/watchlist — blocking add.
  * May take up to ~120s while the server seeds candles.
- * @param {string} symbol trading symbol (e.g. "RELIANCE"), not instrument key
+ *
+ * @param {{ symbol?: string, instrumentKey?: string } | string} input
+ *   string = trading symbol (compat); object may include instrumentKey from autocomplete
  */
-export async function addSymbol(symbol) {
+export async function addSymbol(input) {
+  let body
+  if (typeof input === 'string') {
+    body = { symbol: input }
+  } else if (input && typeof input === 'object') {
+    body = {}
+    if (input.instrumentKey) body.instrumentKey = input.instrumentKey
+    if (input.symbol) body.symbol = input.symbol
+  } else {
+    body = {}
+  }
+
   const response = await fetch('/api/watchlist', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ symbol }),
+    body: JSON.stringify(body),
   })
   return handleResponse(response)
 }

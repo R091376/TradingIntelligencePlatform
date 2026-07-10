@@ -20,7 +20,11 @@ import java.nio.file.Paths;
 import java.util.Objects;
 import java.util.zip.GZIPOutputStream;
 
+import java.util.List;
+import java.util.Optional;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -104,6 +108,56 @@ class InstrumentMasterCacheTest {
         assertEquals("NSE_EQ|INE154A01025", cache.resolve("ITC").instrumentKey());
         assertEquals("NSE_EQ|INE062A01020", cache.resolve("SBIN").instrumentKey());
         assertEquals("NSE_EQ|INE397D01024", cache.resolve("BHARTIARTL").instrumentKey());
+    }
+
+    @Test
+    void findByInstrumentKey_hitAndMiss() {
+        Optional<ResolvedInstrument> hit = cache.findByInstrumentKey("NSE_EQ|INE002A01018");
+        assertTrue(hit.isPresent());
+        assertEquals("RELIANCE", hit.get().tradingSymbol());
+
+        assertTrue(cache.findByInstrumentKey("NSE_EQ|DOES_NOT_EXIST").isEmpty());
+        assertTrue(cache.findByInstrumentKey("  ").isEmpty());
+        assertTrue(cache.findByInstrumentKey(null).isEmpty());
+    }
+
+    @Test
+    void search_prefixTradingSymbolRanksRelianceFirst() {
+        List<ResolvedInstrument> hits = cache.search("rel", 15);
+        assertFalse(hits.isEmpty());
+        assertEquals("RELIANCE", hits.get(0).tradingSymbol());
+        assertEquals("NSE_EQ|INE002A01018", hits.get(0).instrumentKey());
+    }
+
+    @Test
+    void search_niftyFindsIndex() {
+        List<ResolvedInstrument> hits = cache.search("nifty", 15);
+        assertTrue(hits.stream().anyMatch(r ->
+                "NSE_INDEX|Nifty 50".equals(r.instrumentKey())));
+    }
+
+    @Test
+    void search_shortQueryReturnsEmpty() {
+        assertTrue(cache.search("r", 15).isEmpty());
+        assertTrue(cache.search("", 15).isEmpty());
+        assertTrue(cache.search(null, 15).isEmpty());
+    }
+
+    @Test
+    void search_respectsLimit() {
+        List<ResolvedInstrument> hits = cache.search("a", 2);
+        // "a" is length 1 → empty; use "in" which matches INFY / many names
+        hits = cache.search("in", 2);
+        assertTrue(hits.size() <= 2);
+    }
+
+    @Test
+    void search_containsDisplayName() {
+        // short_name "Reliance" / name RELIANCE INDUSTRIES — query "industries" may match name via display
+        // displayName prefers short_name "Reliance"; use "reli" instead already covered.
+        // "infosys" matches displayName Infosys (normalized)
+        List<ResolvedInstrument> hits = cache.search("infosys", 10);
+        assertTrue(hits.stream().anyMatch(r -> "INFY".equals(r.tradingSymbol())));
     }
 
     @Test
