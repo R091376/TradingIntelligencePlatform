@@ -9,10 +9,35 @@ tip:
   upstox:
     access-token: ${UPSTOX_ACCESS_TOKEN:}
   market:
-    default-symbol: RELIANCE
-    default-instrument-key: "NSE_EQ|INE002A01018"
+    # Compat defaults: match first seed (NIFTY 50 index) for chart continuity
+    default-symbol: "Nifty 50"
+    default-instrument-key: "NSE_INDEX|Nifty 50"
     default-timeframe: 5m
     live-feed-enabled: true
     candle-update-throttle-ms: 1000
+  watchlist:
+    # Startup seed = entire list (exactly 10): index first, then 9 top Nifty 50 equities.
+    # Order matters: primary / default chart = first entry (NIFTY 50 index).
+    seed-symbols:
+      - "Nifty 50"
+      - RELIANCE
+      - TCS
+      - HDFCBANK
+      - INFY
+      - ICICIBANK
+      - HINDUNILVR
+      - ITC
+      - SBIN
+      - BHARTIARTL
+    # Optional authoritative keys (preferred when present; else resolve via master).
+    # Bracket form required so Spring binds map keys that contain spaces.
+    seed-instrument-keys:
+      "[Nifty 50]": "NSE_INDEX|Nifty 50"
+    soft-warn-size: 40
+    hard-max-size: 50
+  instruments:
+    master-url: "https://assets.upstox.com/market-quote/instruments/exchange/NSE.json.gz"
+    cache-dir: "${java.io.tmpdir}/tip-instruments"
+    refresh-on-startup: true
   cors:
     allowed-origins: http://localhost:5173

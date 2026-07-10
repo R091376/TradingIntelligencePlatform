@@ -9,7 +9,9 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @EnableConfigurationProperties({
         UpstoxProperties.class,
         MarketProperties.class,
-        CorsProperties.class
+        CorsProperties.class,
+        WatchlistProperties.class,
+        InstrumentProperties.class
 })
 public class WebConfig implements WebMvcConfigurer {
 
