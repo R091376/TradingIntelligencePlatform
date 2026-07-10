@@ -67,17 +67,22 @@ Reference documents this plan assumes you have alongside it: the MVP 1 Consolida
 
 ---
 
-## Phase 3 — Watchlist (multi-symbol, capped at 10)
+## Phase 3 — Watchlist (multi-symbol; hard cap 50; in-memory first)
 
-**Goal:** move from one hardcoded symbol to a real, editable watchlist.
+**Goal:** move from one hardcoded symbol to a real, editable multi-symbol watchlist.
 
-- [ ] `watchlist_symbols` table (Postgres): `id, symbol, exchange, added_at, removed_at, is_active`.
-- [ ] REST endpoints: add symbol, remove symbol, list active watchlist.
-- [ ] Enforce the 10-symbol cap server-side (reject the 11th add with a clear error) — not just in the UI.
-- [ ] Wire watchlist changes to the Market Engine: adding a symbol subscribes it on the Dhan WebSocket and starts a fresh candle stream (optionally backfilling today's historical candles so the chart isn't empty); removing a symbol unsubscribes and stops its stream. Confirm this doesn't disturb any other symbol's in-progress candles.
-- [ ] No restriction needed on *when* edits happen — the design allows both after-hours and live edits since each symbol's state is independent.
+**Approach (delivered — see `Multi-Symbol-Watchlist-Design-v1.0.md` rev 5):** in-memory `WatchlistRepository` first (not Postgres-first); hard product cap **50**; startup seed **NIFTY 50 index + 9 top equities**. Postgres soft-delete (`removed_at` / `is_active`) is a later drop-in.
 
-**Done when:** you can add/remove symbols via API while the app is running during market hours, live candles start for a newly-added symbol without affecting existing ones, and the 11th symbol is rejected.
+- [x] `WatchlistRepository` + ordered `InMemoryWatchlistRepository` (hard-delete on remove; `findPrimary` = first public-active).
+- [x] REST: `GET/POST/DELETE /api/watchlist`; per-symbol candles `GET /api/symbols/{symbolId}/candles`; `/api/market/*` primary-aware compat shim.
+- [x] Enforce hard cap **50** server-side (reject add with **409** when active count ≥ 50; soft-warn at 40 optional).
+- [x] Startup seed: NIFTY 50 index + 9 top Nifty equities (ordered static list; index is primary).
+- [x] Resolve trading symbols via local Upstox NSE instrument master cache (no live search API per add).
+- [x] Wire watchlist changes to multi-instrument feed + multi-bootstrap: add → seed all TFs + subscribe; remove → unsubscribe + evict candle/throttle state without disturbing other symbols.
+- [x] WS subscribe validates against the active watchlist (not a single hardcoded default).
+- [x] Frontend: thin watchlist-driven symbol switcher (chart + WS rebind; timeframe/chart type preserved).
+
+**Done when:** app starts with index + 9 equities and charts the index; you can add/remove symbols via API during market hours without affecting others; the **51st** active symbol is rejected; FE switcher changes chart + WS subscription.
 
 ---
 

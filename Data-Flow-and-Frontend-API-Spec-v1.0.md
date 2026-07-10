@@ -64,7 +64,7 @@ Two different WebSockets are involved and it's easy to conflate them: **Upstox's
 | Endpoint | Purpose |
 |---|---|
 | `GET /api/watchlist` | List active watchlist symbols |
-| `POST /api/watchlist` | Add a symbol (rejects 11th with a clear error) |
+| `POST /api/watchlist` | Add a symbol (hard cap **50** active; rejects with clear error when at cap) |
 | `DELETE /api/watchlist/{symbolId}` | Remove a symbol |
 | `GET /api/symbols/{symbolId}/candles?timeframe=5m&from=...&to=...` | Historical candles to seed a chart on load |
 | `GET /api/symbols/{symbolId}/patterns?status=active` | Active/recent pattern instances for chart overlay |
@@ -147,4 +147,4 @@ A single toggle in the UI switches which series type reads the in-memory candle 
 
 ## 5. One thing worth deciding before building this
 
-The `candle_update` throttle (proposed: ~1/second) is a judgment call, not a fixed Upstox or Lightweight Charts constraint — tune it based on how "live" you actually want the in-progress bar to feel versus how much WebSocket traffic you're comfortable with across 10 symbols × several open timeframes at once.
+The `candle_update` throttle (proposed: ~1/second) is a judgment call, not a fixed Upstox or Lightweight Charts constraint — tune it based on how "live" you actually want the in-progress bar to feel versus how much WebSocket traffic you're comfortable with across up to 50 watchlist symbols × several open timeframes at once (UI typically subscribes only to the active chart symbol+timeframe).

@@ -247,17 +247,25 @@ When watchlist lands, evolve `/api/market/*` into the per-symbol routes above ra
 - Add `TimeframeSelector` in frontend; on change: unsubscribe WS, re-fetch candles, `setData()`, re-subscribe.
 - **Do not** resample candles client-side — always fetch the authoritative timeframe from backend.
 
-### 9.2 MVP2 — Watchlist (max 10 symbols)
+### 9.2 MVP2 — Watchlist (in-memory first; hard cap 50)
+
+**Delivered approach** (see `Multi-Symbol-Watchlist-Design-v1.0.md` rev 5) supersedes the earlier Postgres-first / max-10 plan:
 
 ```
-watchlist_symbols table (Postgres)
-    → WatchlistController
-    → on add: resolve instrument key, seed candles, subscribe Upstox feed
-    → on remove: unsubscribe, evict CandleEngine state
-    → enforce 10-symbol cap server-side
+WatchlistRepository (InMemoryWatchlistRepository first)
+    → WatchlistController / WatchlistService
+    → on add: resolve trading symbol via local Upstox NSE master cache,
+              seed all supported timeframes, subscribe Upstox feed
+    → on remove: unsubscribe, evict CandleEngine + broadcaster throttle keys,
+                 hard-delete entry (in-memory)
+    → hard product cap 50 (soft-warn at 40; POST → 409 when active count ≥ 50)
+    → startup seed: NIFTY 50 index + 9 top Nifty equities (10 total, ordered;
+                    index is primary / findPrimary)
 ```
 
-Frontend: symbol picker + small sparkline tiles (line chart) alongside main chart panel.
+**Postgres later** (drop-in `PostgresWatchlistRepository`): soft-delete via `removed_at` / `is_active` so pattern/journal history can still join after remove. In-memory phase remains hard-delete.
+
+Frontend (v1): thin watchlist-driven **symbol switcher** for the main chart (no sparkline tiles / multi-tile panel yet).
 
 ### 9.3 MVP3 — Database schema
 
