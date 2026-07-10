@@ -25,4 +25,8 @@ public record MarketProperties(
             defaultTimeframe = "5m";
         }
     }
+
+    public boolean isSupportedTimeframe(String timeframe) {
+        return timeframe != null && supportedTimeframes.contains(timeframe);
+    }
 }

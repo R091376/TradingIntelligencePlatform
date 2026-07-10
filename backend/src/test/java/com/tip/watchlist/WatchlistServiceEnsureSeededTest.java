@@ -1,9 +1,14 @@
 package com.tip.watchlist;
 
+import com.tip.api.websocket.LiveCandleBroadcaster;
+import com.tip.api.websocket.LiveWebSocketHandler;
 import com.tip.config.WatchlistProperties;
 import com.tip.instrument.InstrumentMasterCache;
 import com.tip.instrument.InstrumentNotFoundException;
 import com.tip.instrument.ResolvedInstrument;
+import com.tip.market.CandleEngine;
+import com.tip.market.MarketBootstrapService;
+import com.tip.market.MarketDataProvider;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -34,7 +39,20 @@ class WatchlistServiceEnsureSeededTest {
                 40,
                 50
         );
-        service = new WatchlistService(repository, props, masterCache);
+        service = newService(props);
+    }
+
+    private WatchlistService newService(WatchlistProperties props) {
+        return new WatchlistService(
+                repository,
+                props,
+                masterCache,
+                mock(MarketBootstrapService.class),
+                mock(MarketDataProvider.class),
+                mock(CandleEngine.class),
+                mock(LiveCandleBroadcaster.class),
+                mock(LiveWebSocketHandler.class)
+        );
     }
 
     @Test
@@ -89,7 +107,7 @@ class WatchlistServiceEnsureSeededTest {
     @Test
     void ensureSeeded_emptySeedListLeavesEmpty() {
         WatchlistProperties empty = new WatchlistProperties(List.of(), Map.of(), 40, 50);
-        service = new WatchlistService(repository, empty, masterCache);
+        service = newService(empty);
         service.ensureSeeded();
         assertTrue(repository.findAllActive().isEmpty());
     }

@@ -69,8 +69,10 @@ public class LiveWebSocketHandler extends TextWebSocketHandler {
             return;
         }
 
+        // Public-active watchlist symbols only (containsSymbolId excludes REMOVING — KD26).
+        // Also accept primary/default for chart continuity.
         if (!isAcceptedSymbol(symbolId)) {
-            sendError(session, "Unknown symbolId: " + symbolId);
+            sendError(session, "Symbol not on watchlist: " + symbolId);
             return;
         }
 
@@ -92,7 +94,7 @@ public class LiveWebSocketHandler extends TextWebSocketHandler {
     }
 
     /**
-     * Accept if on public-active watchlist, or equals primary/default (chart continuity interim).
+     * Accept if on public-active watchlist, or equals primary/default (chart continuity).
      */
     private boolean isAcceptedSymbol(String symbolId) {
         if (watchlistRepository.containsSymbolId(symbolId)) {
@@ -123,6 +125,34 @@ public class LiveWebSocketHandler extends TextWebSocketHandler {
         sessions.remove(session.getId());
         subscriptions.remove(session.getId());
         log.info("Live WebSocket disconnected: {} ({})", session.getId(), status);
+    }
+
+    /**
+     * Notify and clear sessions still subscribed to a removed symbol (PR4).
+     */
+    public void notifySymbolRemoved(String symbolId) {
+        if (symbolId == null) {
+            return;
+        }
+        subscriptions.forEach((sessionId, subscription) -> {
+            if (!symbolId.equals(subscription.symbolId())) {
+                return;
+            }
+            WebSocketSession session = sessions.get(sessionId);
+            if (session != null && session.isOpen()) {
+                try {
+                    synchronized (session) {
+                        session.sendMessage(new TextMessage(objectMapper.writeValueAsString(Map.of(
+                                "type", "error",
+                                "message", "Symbol removed from watchlist"
+                        ))));
+                    }
+                } catch (IOException e) {
+                    log.warn("Failed to notify session {} of symbol removal", sessionId, e);
+                }
+            }
+            subscriptions.remove(sessionId);
+        });
     }
 
     public void broadcastAll(Object payload) {
