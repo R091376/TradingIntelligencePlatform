@@ -83,9 +83,9 @@ class WatchlistServiceTest {
         when(instrumentMasterCache.resolve("TATASTEEL")).thenReturn(resolved);
         when(watchlistRepository.containsSymbolId(resolved.instrumentKey())).thenReturn(false);
         when(watchlistRepository.findByTradingSymbolIgnoreCase("TATASTEEL")).thenReturn(Optional.empty());
+        // reserve: existing check empty; post-bootstrap: READY entry
         when(watchlistRepository.findBySymbolId(resolved.instrumentKey()))
                 .thenReturn(Optional.empty())
-                .thenReturn(Optional.of(readyEntry(resolved)))
                 .thenReturn(Optional.of(readyEntry(resolved)));
         when(watchlistRepository.countActive()).thenReturn(10);
         when(watchlistRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -104,6 +104,66 @@ class WatchlistServiceTest {
 
         verify(marketBootstrapService).bootstrapSymbol(any(WatchlistEntry.class));
         verify(marketDataProvider).subscribeInstruments(eq(Set.of(resolved.instrumentKey())));
+    }
+
+    @Test
+    void addUnexpectedBootstrapExceptionMarksFailedAndReturnsEntry() {
+        ResolvedInstrument resolved = new ResolvedInstrument(
+                "NSE_EQ|INE081A01020", "TATASTEEL", "NSE", "NSE_EQ", "EQ", "Tata Steel", null
+        );
+        when(instrumentMasterCache.resolve("TATASTEEL")).thenReturn(resolved);
+        when(watchlistRepository.containsSymbolId(resolved.instrumentKey())).thenReturn(false);
+        when(watchlistRepository.findByTradingSymbolIgnoreCase("TATASTEEL")).thenReturn(Optional.empty());
+        when(watchlistRepository.countActive()).thenReturn(5);
+        when(watchlistRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        WatchlistEntry pending = pendingEntry(resolved);
+        WatchlistEntry failed = new WatchlistEntry(
+                resolved.instrumentKey(), resolved.tradingSymbol(), resolved.exchange(),
+                resolved.segment(), resolved.instrumentType(), resolved.displayName(),
+                Instant.parse("2026-07-10T00:00:00Z"), true, SymbolBootstrapStatus.FAILED,
+                "Bootstrap failed unexpectedly: boom"
+        );
+        // reserve existing-check empty; markFailedIfStillPresent read; post-bootstrap read FAILED
+        when(watchlistRepository.findBySymbolId(resolved.instrumentKey()))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(pending))
+                .thenReturn(Optional.of(failed));
+
+        when(marketBootstrapService.bootstrapSymbol(any(WatchlistEntry.class)))
+                .thenThrow(new RuntimeException("boom"));
+
+        WatchlistEntry result = service.add("TATASTEEL");
+
+        assertThat(result.bootstrapStatus()).isEqualTo(SymbolBootstrapStatus.FAILED);
+        ArgumentCaptor<WatchlistEntry> saves = ArgumentCaptor.forClass(WatchlistEntry.class);
+        verify(watchlistRepository, org.mockito.Mockito.atLeast(2)).save(saves.capture());
+        assertThat(saves.getAllValues().stream()
+                .anyMatch(e -> e.bootstrapStatus() == SymbolBootstrapStatus.FAILED)).isTrue();
+        verify(marketDataProvider).subscribeInstruments(eq(Set.of(resolved.instrumentKey())));
+    }
+
+    @Test
+    void addRemovedDuringBootstrapReturns404() {
+        ResolvedInstrument resolved = new ResolvedInstrument(
+                "NSE_EQ|INE081A01020", "TATASTEEL", "NSE", "NSE_EQ", "EQ", "Tata Steel", null
+        );
+        when(instrumentMasterCache.resolve("TATASTEEL")).thenReturn(resolved);
+        when(watchlistRepository.containsSymbolId(resolved.instrumentKey())).thenReturn(false);
+        when(watchlistRepository.findByTradingSymbolIgnoreCase("TATASTEEL")).thenReturn(Optional.empty());
+        when(watchlistRepository.countActive()).thenReturn(5);
+        when(watchlistRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(watchlistRepository.findBySymbolId(resolved.instrumentKey()))
+                .thenReturn(Optional.empty()) // reserve
+                .thenReturn(Optional.empty()); // post-bootstrap: hard-deleted by concurrent remove
+        when(marketBootstrapService.bootstrapSymbol(any(WatchlistEntry.class)))
+                .thenReturn(new MarketBootstrapService.BootstrapSymbolResult(
+                        resolved.instrumentKey(), SymbolBootstrapStatus.REMOVING, 0, 0, "cancelled"));
+
+        assertThatThrownBy(() -> service.add("TATASTEEL"))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
+                        .isEqualTo(HttpStatus.NOT_FOUND));
     }
 
     @Test
@@ -164,7 +224,6 @@ class WatchlistServiceTest {
         when(watchlistRepository.findByTradingSymbolIgnoreCase("TATASTEEL")).thenReturn(Optional.empty());
         when(watchlistRepository.findBySymbolId(resolved.instrumentKey()))
                 .thenReturn(Optional.empty())
-                .thenReturn(Optional.of(readyEntry(resolved)))
                 .thenReturn(Optional.of(readyEntry(resolved)));
         when(watchlistRepository.countActive()).thenReturn(40);
         when(watchlistRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -230,6 +289,21 @@ class WatchlistServiceTest {
                 Instant.parse("2026-07-10T00:00:00Z"),
                 true,
                 SymbolBootstrapStatus.READY,
+                null
+        );
+    }
+
+    private static WatchlistEntry pendingEntry(ResolvedInstrument r) {
+        return new WatchlistEntry(
+                r.instrumentKey(),
+                r.tradingSymbol(),
+                r.exchange(),
+                r.segment(),
+                r.instrumentType(),
+                r.displayName(),
+                Instant.parse("2026-07-10T00:00:00Z"),
+                true,
+                SymbolBootstrapStatus.PENDING,
                 null
         );
     }

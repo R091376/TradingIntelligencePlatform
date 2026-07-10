@@ -27,6 +27,15 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>
  * {@link #ensureSeeded()} is key-authoritative: {@code tip.watchlist.seed-instrument-keys}
  * wins over master resolve; master is used for display enrich and for seeds without a pinned key.
+ * <p>
+ * Locking (PR4 review fixes):
+ * <ul>
+ *   <li>{@code addCapacityLock} — short critical section for hard-max check + PENDING insert
+ *       (OI-1: race-safe capacity across concurrent multi-symbol POSTs)</li>
+ *   <li>per-{@code symbolId} lock — duplicate checks, insert handoff, remove, post-bootstrap;
+ *       <b>not</b> held across {@code bootstrapSymbol} so DELETE can mark REMOVING mid-seed (OI-2)</li>
+ *   <li>Lock order when both needed: {@code addCapacityLock} then per-symbol lock</li>
+ * </ul>
  */
 @Service
 public class WatchlistService {
@@ -43,7 +52,13 @@ public class WatchlistService {
     private final LiveCandleBroadcaster liveCandleBroadcaster;
     private final LiveWebSocketHandler liveWebSocketHandler;
 
-    /** Per-symbolId locks for add/remove isolation. */
+    /**
+     * Global mutex for hard-max capacity reservation (countActive + insert PENDING).
+     * Not held during bootstrap I/O.
+     */
+    private final Object addCapacityLock = new Object();
+
+    /** Per-symbolId locks for add/remove isolation (not held across bootstrap). */
     private final Map<String, Object> locks = new ConcurrentHashMap<>();
 
     public WatchlistService(
@@ -103,8 +118,8 @@ public class WatchlistService {
     }
 
     /**
-     * Blocking add by trading symbol: resolve → hard-max → soft-warn → PENDING →
-     * bootstrap → subscribe → return final entry (READY or FAILED).
+     * Blocking add by trading symbol: resolve → hard-max reserve → PENDING →
+     * bootstrap (unlocked) → subscribe → return final entry (READY or FAILED).
      */
     public WatchlistEntry add(String tradingSymbol) {
         String input = validateTradingSymbolInput(tradingSymbol);
@@ -120,91 +135,161 @@ public class WatchlistService {
         }
 
         String symbolId = resolved.instrumentKey();
-        Object lock = lockFor(symbolId);
-        synchronized (lock) {
-            if (watchlistRepository.containsSymbolId(symbolId)) {
-                throw new ResponseStatusException(
-                        HttpStatus.CONFLICT,
-                        "Symbol already on watchlist: " + resolved.tradingSymbol()
-                );
-            }
-            Optional<WatchlistEntry> byTs =
-                    watchlistRepository.findByTradingSymbolIgnoreCase(resolved.tradingSymbol());
-            if (byTs.isPresent()) {
-                throw new ResponseStatusException(
-                        HttpStatus.CONFLICT,
-                        "Symbol already on watchlist: " + byTs.get().tradingSymbol()
-                );
-            }
-            Optional<WatchlistEntry> existing = watchlistRepository.findBySymbolId(symbolId);
-            if (existing.isPresent()) {
-                throw new ResponseStatusException(
-                        HttpStatus.CONFLICT,
-                        "Symbol already on watchlist: " + resolved.tradingSymbol()
-                );
-            }
+        Object symbolLock = lockFor(symbolId);
 
-            int active = watchlistRepository.countActive();
-            int hardMax = watchlistProperties.hardMaxSize();
-            if (active >= hardMax) {
-                throw new ResponseStatusException(
-                        HttpStatus.CONFLICT,
-                        "Watchlist is full (max " + hardMax + " symbols)"
-                );
-            }
+        // OI-1 + OI-2: reserve capacity + insert PENDING under short locks; do not hold during bootstrap.
+        WatchlistEntry saved = reserveAndInsertPending(resolved, symbolId, symbolLock);
 
-            int softWarn = watchlistProperties.softWarnSize();
-            if (active >= softWarn) {
-                log.warn("Watchlist soft-warn threshold reached: active={} softWarn={} hardMax={}",
-                        active, softWarn, hardMax);
-            }
+        // Bootstrap outside all locks so same-symbol DELETE can mark REMOVING (cooperative cancel).
+        MarketBootstrapService.BootstrapSymbolResult result;
+        try {
+            result = marketBootstrapService.bootstrapSymbol(saved);
+        } catch (Exception e) {
+            // OI-3: never leave a permanent PENDING zombie after the request fails.
+            log.error("Unexpected bootstrap failure for {}: {}", symbolId, e.toString());
+            markFailedIfStillPresent(symbolId, symbolLock,
+                    "Bootstrap failed unexpectedly: " + (e.getMessage() != null ? e.getMessage() : e.toString()));
+            result = null;
+        }
 
-            WatchlistEntry pending = new WatchlistEntry(
-                    symbolId,
-                    resolved.tradingSymbol(),
-                    resolved.exchange(),
-                    resolved.segment(),
-                    resolved.instrumentType(),
-                    resolved.displayName(),
-                    Instant.now(),
-                    true,
-                    SymbolBootstrapStatus.PENDING,
-                    null
-            );
-            WatchlistEntry saved = watchlistRepository.save(pending);
-            log.info("Watchlist add PENDING: {} ({})", resolved.tradingSymbol(), symbolId);
-
-            MarketBootstrapService.BootstrapSymbolResult result =
-                    marketBootstrapService.bootstrapSymbol(saved);
-
+        // Post-bootstrap: re-check concurrent remove, subscribe if still present.
+        synchronized (symbolLock) {
             Optional<WatchlistEntry> after = watchlistRepository.findBySymbolId(symbolId);
             if (after.isEmpty() || after.get().bootstrapStatus() == SymbolBootstrapStatus.REMOVING
-                    || result.status() == SymbolBootstrapStatus.REMOVING) {
+                    || (result != null && result.status() == SymbolBootstrapStatus.REMOVING)) {
                 throw new ResponseStatusException(
                         HttpStatus.NOT_FOUND,
                         "Symbol was removed during bootstrap: " + symbolId
                 );
             }
 
-            // Subscribe live feed for READY or FAILED so ticks can still arrive
-            if (result.status() == SymbolBootstrapStatus.READY
-                    || result.status() == SymbolBootstrapStatus.FAILED) {
+            WatchlistEntry entry = after.get();
+
+            // If unexpected throw path marked FAILED (or bootstrap returned READY/FAILED), subscribe.
+            SymbolBootstrapStatus status = entry.bootstrapStatus();
+            if (status == SymbolBootstrapStatus.READY || status == SymbolBootstrapStatus.FAILED) {
                 try {
                     marketDataProvider.subscribeInstruments(Set.of(symbolId));
                 } catch (Exception e) {
                     log.warn("Failed to subscribe live feed for {}: {}", symbolId, e.getMessage());
                 }
+            } else if (status == SymbolBootstrapStatus.PENDING) {
+                // Safety net: should not happen if bootstrap always writes READY/FAILED.
+                markFailedUnlocked(entry, "Bootstrap completed without status update");
+                entry = watchlistRepository.findBySymbolId(symbolId).orElse(entry);
             }
 
-            WatchlistEntry finalEntry = watchlistRepository.findBySymbolId(symbolId).orElse(after.get());
-            log.info("Watchlist add complete: {} status={}", symbolId, finalEntry.bootstrapStatus());
-            return finalEntry;
+            log.info("Watchlist add complete: {} status={}", symbolId, entry.bootstrapStatus());
+            return entry;
         }
+    }
+
+    /**
+     * Hard-max check + soft-warn + PENDING insert under global capacity lock then per-symbol lock.
+     * Lock order: {@code addCapacityLock} → per-symbol.
+     */
+    private WatchlistEntry reserveAndInsertPending(
+            ResolvedInstrument resolved,
+            String symbolId,
+            Object symbolLock
+    ) {
+        synchronized (addCapacityLock) {
+            synchronized (symbolLock) {
+                if (watchlistRepository.containsSymbolId(symbolId)) {
+                    throw new ResponseStatusException(
+                            HttpStatus.CONFLICT,
+                            "Symbol already on watchlist: " + resolved.tradingSymbol()
+                    );
+                }
+                Optional<WatchlistEntry> byTs =
+                        watchlistRepository.findByTradingSymbolIgnoreCase(resolved.tradingSymbol());
+                if (byTs.isPresent()) {
+                    throw new ResponseStatusException(
+                            HttpStatus.CONFLICT,
+                            "Symbol already on watchlist: " + byTs.get().tradingSymbol()
+                    );
+                }
+                Optional<WatchlistEntry> existing = watchlistRepository.findBySymbolId(symbolId);
+                if (existing.isPresent()) {
+                    throw new ResponseStatusException(
+                            HttpStatus.CONFLICT,
+                            "Symbol already on watchlist: " + resolved.tradingSymbol()
+                    );
+                }
+
+                int active = watchlistRepository.countActive();
+                int hardMax = watchlistProperties.hardMaxSize();
+                if (active >= hardMax) {
+                    throw new ResponseStatusException(
+                            HttpStatus.CONFLICT,
+                            "Watchlist is full (max " + hardMax + " symbols)"
+                    );
+                }
+
+                int softWarn = watchlistProperties.softWarnSize();
+                if (active >= softWarn) {
+                    log.warn("Watchlist soft-warn threshold reached: active={} softWarn={} hardMax={}",
+                            active, softWarn, hardMax);
+                }
+
+                WatchlistEntry pending = new WatchlistEntry(
+                        symbolId,
+                        resolved.tradingSymbol(),
+                        resolved.exchange(),
+                        resolved.segment(),
+                        resolved.instrumentType(),
+                        resolved.displayName(),
+                        Instant.now(),
+                        true,
+                        SymbolBootstrapStatus.PENDING,
+                        null
+                );
+                WatchlistEntry saved = watchlistRepository.save(pending);
+                log.info("Watchlist add PENDING: {} ({})", resolved.tradingSymbol(), symbolId);
+                return saved;
+            }
+        }
+    }
+
+    /**
+     * OI-3: mark FAILED if entry still exists and is not REMOVING (does not resurrect deleted rows).
+     */
+    private void markFailedIfStillPresent(String symbolId, Object symbolLock, String error) {
+        synchronized (symbolLock) {
+            Optional<WatchlistEntry> opt = watchlistRepository.findBySymbolId(symbolId);
+            if (opt.isEmpty()) {
+                return;
+            }
+            WatchlistEntry e = opt.get();
+            if (e.bootstrapStatus() == SymbolBootstrapStatus.REMOVING) {
+                return;
+            }
+            markFailedUnlocked(e, error);
+        }
+    }
+
+    private void markFailedUnlocked(WatchlistEntry e, String error) {
+        watchlistRepository.save(new WatchlistEntry(
+                e.symbolId(),
+                e.tradingSymbol(),
+                e.exchange(),
+                e.segment(),
+                e.instrumentType(),
+                e.displayName(),
+                e.addedAt(),
+                e.active(),
+                SymbolBootstrapStatus.FAILED,
+                error
+        ));
+        log.warn("Watchlist entry marked FAILED: {} — {}", e.symbolId(), error);
     }
 
     /**
      * Remove: mark REMOVING → unsubscribe → engine.evict → broadcaster.evictThrottleKeys
      * → notify WS → hard-delete.
+     * <p>
+     * Per-symbol lock is short (status + cleanup); concurrent {@code add} releases its lock
+     * during bootstrap so this can mark REMOVING and trigger cooperative cancel.
      */
     public void remove(String symbolId) {
         if (symbolId == null || symbolId.isBlank()) {
