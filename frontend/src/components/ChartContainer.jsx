@@ -71,6 +71,8 @@ export default function ChartContainer() {
   const timeframeRef = useRef(DEFAULT_TIMEFRAME)
   const activeSymbolIdRef = useRef(null)
   const loadGenerationRef = useRef(0)
+  const watchlistRef = useRef([])
+  const disposedRef = useRef(false)
 
   const [watchlist, setWatchlist] = useState([])
   const [activeSymbolId, setActiveSymbolId] = useState(null)
@@ -87,10 +89,13 @@ export default function ChartContainer() {
   chartTypeRef.current = chartType
   timeframeRef.current = timeframe
   activeSymbolIdRef.current = activeSymbolId
+  watchlistRef.current = watchlist
 
   const activeEntry = watchlist.find((e) => e.symbolId === activeSymbolId) ?? null
   const displayName =
     activeEntry?.tradingSymbol || activeEntry?.displayName || activeSymbolId || '…'
+  const activeIsFailed = normalizeStatus(activeEntry?.bootstrapStatus) === 'FAILED'
+  const activeIsPending = normalizeStatus(activeEntry?.bootstrapStatus) === 'PENDING'
 
   const updateConnectionStatus = useCallback((wsStatus, marketPhase) => {
     wsStatusRef.current = wsStatus
@@ -187,7 +192,7 @@ export default function ChartContainer() {
 
   // ── Init: watchlist → status → candles → chart + WS ──────────────────
   useEffect(() => {
-    let disposed = false
+    disposedRef.current = false
     let resizeObserver = null
     let pollTimer = null
 
@@ -198,7 +203,7 @@ export default function ChartContainer() {
           fetchMarketStatus(),
           fetchTimeframes(),
         ])
-        if (disposed) return
+        if (disposedRef.current) return
 
         const supported = tfInfo.supported?.length ? tfInfo.supported : DEFAULT_TIMEFRAMES
         const initialTf = supported.includes(tfInfo.defaultTimeframe)
@@ -212,6 +217,7 @@ export default function ChartContainer() {
 
         let entries = Array.isArray(list) ? list : []
         setWatchlist(entries)
+        watchlistRef.current = entries
 
         // Global FAILED with empty / all-failed watchlist → hard bail
         const globalFailed = normalizeStatus(status.bootstrapStatus) === 'FAILED'
@@ -227,7 +233,7 @@ export default function ChartContainer() {
         // PENDING poll: wait for at least one READY (or give up after ~2 min)
         let polls = 0
         while (
-          !disposed &&
+          !disposedRef.current &&
           entries.length > 0 &&
           !entries.some((e) => normalizeStatus(e.bootstrapStatus) === 'READY') &&
           entries.some((e) => normalizeStatus(e.bootstrapStatus) === 'PENDING') &&
@@ -237,10 +243,11 @@ export default function ChartContainer() {
           await new Promise((r) => {
             pollTimer = setTimeout(r, 1000)
           })
-          if (disposed) return
+          if (disposedRef.current) return
           try {
             entries = await fetchWatchlist()
             setWatchlist(entries)
+            watchlistRef.current = entries
             const st = await fetchMarketStatus()
             marketPhaseRef.current = st.marketPhase?.toLowerCase() ?? marketPhaseRef.current
           } catch {
@@ -249,9 +256,9 @@ export default function ChartContainer() {
           polls += 1
         }
 
-        if (disposed) return
+        if (disposedRef.current) return
 
-        // Pick primary = first entry (seed order)
+        // Prefer first READY; otherwise first entry (seed order)
         const primary =
           entries.find((e) => normalizeStatus(e.bootstrapStatus) === 'READY') ||
           entries[0] ||
@@ -275,25 +282,30 @@ export default function ChartContainer() {
 
         if (marketPhaseRef.current === 'closed') {
           setInfoMessage('Market is closed. Showing last available candle data.')
+        } else if (normalizeStatus(primary.bootstrapStatus) === 'PENDING') {
+          setInfoMessage('Loading market data…')
         } else {
           setInfoMessage(null)
         }
 
         const generation = ++loadGenerationRef.current
         let candles = []
-        if (normalizeStatus(primary.bootstrapStatus) !== 'FAILED') {
+        if (normalizeStatus(primary.bootstrapStatus) === 'READY') {
           try {
             candles = await loadCandles(primary.symbolId, initialTf, generation)
-            if (disposed || candles === null) return
+            if (disposedRef.current || candles === null) return
             applyInfoAfterLoad(candles)
           } catch (err) {
-            if (!disposed) {
+            if (!disposedRef.current) {
               setError(err instanceof Error ? err.message : 'Failed to load candles')
             }
           }
+        } else if (normalizeStatus(primary.bootstrapStatus) === 'PENDING') {
+          // PENDING returns [] from backend; keep empty until post-init poll recovers
+          candlesRef.current.clear()
         }
 
-        if (disposed) return
+        if (disposedRef.current) return
 
         const chart = createChart(containerRef.current, {
           layout: {
@@ -333,9 +345,15 @@ export default function ChartContainer() {
           symbolId: primary.symbolId,
           timeframe: initialTf,
           onStatus: (wsStatus, message) => {
-            if (disposed) return
+            if (disposedRef.current) return
             if (wsStatus === 'error' && message) {
-              setError(message)
+              // Don't clobber per-symbol bootstrapError with WS noise while FAILED
+              const active = watchlistRef.current.find(
+                (e) => e.symbolId === activeSymbolIdRef.current,
+              )
+              if (normalizeStatus(active?.bootstrapStatus) !== 'FAILED') {
+                setError(message)
+              }
             }
             updateConnectionStatus(wsStatus, marketPhaseRef.current)
           },
@@ -372,7 +390,7 @@ export default function ChartContainer() {
         updateConnectionStatus('connecting', marketPhaseRef.current)
         setLoading(false)
       } catch (err) {
-        if (!disposed) {
+        if (!disposedRef.current) {
           setError(err instanceof Error ? err.message : 'Failed to load chart data')
           setLoading(false)
           updateConnectionStatus('error', marketPhaseRef.current)
@@ -383,7 +401,8 @@ export default function ChartContainer() {
     init()
 
     return () => {
-      disposed = true
+      disposedRef.current = true
+      loadGenerationRef.current += 1
       if (pollTimer) clearTimeout(pollTimer)
       socketRef.current?.close()
       socketRef.current = null
@@ -395,6 +414,101 @@ export default function ChartContainer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only init
   }, [updateConnectionStatus, loadCandles])
 
+  // ── Post-init PENDING recovery: poll while any entry is PENDING ──────
+  // Uses refs so effect cleanup does not cancel an in-flight READY recovery load.
+  const needsPendingPoll =
+    !loading &&
+    watchlist.some((e) => normalizeStatus(e.bootstrapStatus) === 'PENDING')
+
+  useEffect(() => {
+    if (!needsPendingPoll) return
+
+    let stopped = false
+    let timer = null
+
+    async function recoverActiveIfReady(prevActive, nextActive) {
+      const prevStatus = normalizeStatus(prevActive?.bootstrapStatus)
+      const nextStatus = normalizeStatus(nextActive.bootstrapStatus)
+      const activeId = nextActive.symbolId
+
+      if (prevStatus === 'PENDING' && nextStatus === 'READY') {
+        const generation = ++loadGenerationRef.current
+        setSwitching(true)
+        setError(null)
+        setInfoMessage(null)
+        try {
+          const candles = await loadCandles(
+            activeId,
+            timeframeRef.current,
+            generation,
+          )
+          // generation / disposed only — not effect `stopped` (READY load must finish)
+          if (candles === null || disposedRef.current) return
+          applyInfoAfterLoad(candles)
+          socketRef.current?.subscribe(activeId, timeframeRef.current)
+        } catch (err) {
+          if (generation === loadGenerationRef.current && !disposedRef.current) {
+            setError(err instanceof Error ? err.message : 'Failed to load candles')
+          }
+        } finally {
+          if (generation === loadGenerationRef.current) {
+            setSwitching(false)
+          }
+        }
+      } else if (prevStatus === 'PENDING' && nextStatus === 'FAILED') {
+        applyFailedBanner(nextActive)
+        setInfoMessage(null)
+      } else if (nextStatus === 'PENDING') {
+        setInfoMessage((prevMsg) =>
+          prevMsg === 'Market is closed. Showing last available candle data.'
+            ? prevMsg
+            : 'Loading market data…',
+        )
+      }
+    }
+
+    async function pollPending() {
+      if (stopped || disposedRef.current) return
+
+      const stillPending = watchlistRef.current.some(
+        (e) => normalizeStatus(e.bootstrapStatus) === 'PENDING',
+      )
+      if (!stillPending) return
+
+      try {
+        const entries = await fetchWatchlist()
+        if (stopped || disposedRef.current) return
+
+        const prev = watchlistRef.current
+        setWatchlist(entries)
+        watchlistRef.current = entries
+
+        const activeId = activeSymbolIdRef.current
+        if (activeId) {
+          const prevActive = prev.find((e) => e.symbolId === activeId)
+          const nextActive = entries.find((e) => e.symbolId === activeId)
+          if (nextActive) {
+            // fire recovery without blocking the poll loop
+            void recoverActiveIfReady(prevActive, nextActive)
+          }
+        }
+      } catch {
+        // transient — keep polling
+      }
+
+      if (!stopped && !disposedRef.current) {
+        timer = setTimeout(pollPending, 1000)
+      }
+    }
+
+    timer = setTimeout(pollPending, 1000)
+
+    return () => {
+      stopped = true
+      if (timer) clearTimeout(timer)
+    }
+  }, [needsPendingPoll, loadCandles])
+
   useEffect(() => {
     if (!chartRef.current || loading) return
     switchChartType(chartType)
@@ -403,6 +517,7 @@ export default function ChartContainer() {
   /**
    * Switch active chart symbol. Optional `entryHint` avoids relying on stale
    * React state right after add/remove refreshes the list.
+   * Allows mid-flight supersede: always bumps generation so in-flight loads are discarded.
    */
   async function switchToSymbol(nextSymbolId, entryHint = null, { force = false } = {}) {
     if (!nextSymbolId || loading) return
@@ -414,7 +529,7 @@ export default function ChartContainer() {
 
     const entry =
       entryHint ||
-      watchlist.find((e) => e.symbolId === nextSymbolId) ||
+      watchlistRef.current.find((e) => e.symbolId === nextSymbolId) ||
       null
 
     setActiveSymbolId(nextSymbolId)
@@ -426,6 +541,20 @@ export default function ChartContainer() {
       if (seriesRef.current) {
         applySeriesData(seriesRef.current, chartTypeRef.current)
       }
+      socketRef.current?.subscribe(nextSymbolId, timeframeRef.current)
+      if (generation === loadGenerationRef.current) {
+        setSwitching(false)
+      }
+      return
+    }
+
+    if (normalizeStatus(entry?.bootstrapStatus) === 'PENDING') {
+      // Wait for post-init PENDING poll to recover; clear series for now
+      candlesRef.current.clear()
+      if (seriesRef.current) {
+        applySeriesData(seriesRef.current, chartTypeRef.current)
+      }
+      setInfoMessage('Loading market data…')
       socketRef.current?.subscribe(nextSymbolId, timeframeRef.current)
       if (generation === loadGenerationRef.current) {
         setSwitching(false)
@@ -449,30 +578,64 @@ export default function ChartContainer() {
     }
   }
 
+  // Open #1: allow superseding in-flight symbol switch via generation bump
   function handleSymbolChange(nextSymbolId) {
-    if (switching || adding) return
+    if (adding || loading) return
     return switchToSymbol(nextSymbolId)
   }
 
   // ── Timeframe switch (preserve symbol + chart type) ──────────────────
   async function handleTimeframeChange(nextTf) {
-    if (nextTf === timeframe || switching || loading || !activeSymbolId) return
+    if (nextTf === timeframe || loading || !activeSymbolId) return
+    // Allow supersede while switching (generation), but not while adding
+    if (adding) return
+
+    const entry =
+      watchlistRef.current.find((e) => e.symbolId === activeSymbolIdRef.current) ||
+      null
+
+    // Open #3: FAILED — skip candles fetch (would 503), keep bootstrapError
+    if (normalizeStatus(entry?.bootstrapStatus) === 'FAILED') {
+      ++loadGenerationRef.current // discard any in-flight load
+      setTimeframe(nextTf)
+      timeframeRef.current = nextTf
+      applyFailedBanner(entry)
+      socketRef.current?.subscribe(activeSymbolIdRef.current, nextTf)
+      return
+    }
+
+    // PENDING — update TF locally; post-init poll will load when READY
+    if (normalizeStatus(entry?.bootstrapStatus) === 'PENDING') {
+      ++loadGenerationRef.current
+      setTimeframe(nextTf)
+      timeframeRef.current = nextTf
+      setInfoMessage('Loading market data…')
+      socketRef.current?.subscribe(activeSymbolIdRef.current, nextTf)
+      return
+    }
 
     const generation = ++loadGenerationRef.current
     setSwitching(true)
     setError(null)
 
     try {
-      const candles = await loadCandles(activeSymbolId, nextTf, generation)
+      const candles = await loadCandles(activeSymbolIdRef.current, nextTf, generation)
       if (candles === null) return
       setTimeframe(nextTf)
       timeframeRef.current = nextTf
       applyInfoAfterLoad(candles)
-      applyFailedBanner(activeEntry)
-      socketRef.current?.subscribe(activeSymbolId, nextTf)
+      socketRef.current?.subscribe(activeSymbolIdRef.current, nextTf)
     } catch (err) {
       if (generation === loadGenerationRef.current) {
-        setError(err instanceof Error ? err.message : 'Failed to load timeframe')
+        // Prefer bootstrapError if active is FAILED mid-flight
+        const active = watchlistRef.current.find(
+          (e) => e.symbolId === activeSymbolIdRef.current,
+        )
+        const failedMsg = entryFailedMessage(active)
+        setError(
+          failedMsg ||
+            (err instanceof Error ? err.message : 'Failed to load timeframe'),
+        )
       }
     } finally {
       if (generation === loadGenerationRef.current) {
@@ -490,6 +653,7 @@ export default function ChartContainer() {
       const entry = await addSymbol(tradingSymbol)
       const refreshed = await fetchWatchlist()
       setWatchlist(refreshed)
+      watchlistRef.current = refreshed
 
       if (normalizeStatus(entry.bootstrapStatus) === 'FAILED') {
         setError(
@@ -513,13 +677,14 @@ export default function ChartContainer() {
 
   // ── Remove active symbol ─────────────────────────────────────────────
   async function handleRemove(symbolId) {
-    if (!symbolId || switching || loading || adding) return
+    if (!symbolId || loading || adding) return
     setError(null)
     const wasActive = symbolId === activeSymbolIdRef.current
     try {
       await removeSymbol(symbolId)
       const refreshed = await fetchWatchlist()
       setWatchlist(refreshed)
+      watchlistRef.current = refreshed
 
       if (!refreshed.length) {
         loadGenerationRef.current += 1
@@ -544,8 +709,6 @@ export default function ChartContainer() {
     }
   }
 
-  const busy = loading || switching || adding
-
   return (
     <div className="chart-page">
       <header className="chart-header">
@@ -569,7 +732,7 @@ export default function ChartContainer() {
             timeframes={timeframes}
             value={timeframe}
             onChange={handleTimeframeChange}
-            disabled={busy || !activeSymbolId}
+            disabled={loading || adding || !activeSymbolId || activeIsFailed}
           />
           <ChartTypeToggle chartType={chartType} onChange={setChartType} />
         </div>
@@ -579,13 +742,15 @@ export default function ChartContainer() {
       {!error && infoMessage && <div className="chart-info">{infoMessage}</div>}
 
       <div className="chart-panel">
-        {(loading || switching) && (
+        {(loading || switching || activeIsPending) && (
           <div className="chart-loading">
-            {switching
-              ? adding
-                ? 'Adding & seeding…'
-                : 'Loading symbol…'
-              : 'Loading candles…'}
+            {adding
+              ? 'Adding & seeding…'
+              : activeIsPending
+                ? 'Waiting for symbol bootstrap…'
+                : switching
+                  ? 'Loading symbol…'
+                  : 'Loading candles…'}
           </div>
         )}
         <div ref={containerRef} className="chart-container" />
