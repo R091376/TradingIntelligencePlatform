@@ -12,6 +12,7 @@ import com.upstox.feeder.listener.OnOpenListener;
 import com.upstox.feeder.listener.OnReconnectingListener;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.Collections;
@@ -21,6 +22,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BiFunction;
 
 /**
  * Long-lived Upstox Market Data Feed V3 client (KD23).
@@ -29,14 +31,22 @@ import java.util.concurrent.atomic.AtomicLong;
  * Dynamic add/remove uses {@code subscribe}/{@code unsubscribe} only — never
  * disconnect+recreate per instrument. Local {@link #subscribedKeys} is the
  * source of truth; any new streamer is constructed with the full local set.
+ * <p>
+ * On SDK subscribe/unsubscribe failure, the local set is rolled back so a later
+ * retry can re-issue the operation.
  */
 @Component
 public class UpstoxFeedClient {
 
     private static final Logger log = LoggerFactory.getLogger(UpstoxFeedClient.class);
 
+    @FunctionalInterface
+    interface StreamerFactory extends BiFunction<ApiClient, Set<String>, MarketDataStreamerV3> {
+    }
+
     private final ApiClient apiClient;
     private final MarketStatusService marketStatusService;
+    private final StreamerFactory streamerFactory;
 
     private final Set<String> subscribedKeys = ConcurrentHashMap.newKeySet();
     private final AtomicLong tickCount = new AtomicLong();
@@ -46,9 +56,21 @@ public class UpstoxFeedClient {
     private volatile TickHandler tickHandler;
     private volatile boolean marketInfoLogged;
 
+    @Autowired
     public UpstoxFeedClient(ApiClient apiClient, MarketStatusService marketStatusService) {
+        this(apiClient, marketStatusService,
+                (client, keys) -> new MarketDataStreamerV3(client, keys, Mode.FULL));
+    }
+
+    /** Package-visible for tests that inject a mock streamer factory. */
+    UpstoxFeedClient(
+            ApiClient apiClient,
+            MarketStatusService marketStatusService,
+            StreamerFactory streamerFactory
+    ) {
         this.apiClient = apiClient;
         this.marketStatusService = marketStatusService;
+        this.streamerFactory = Objects.requireNonNull(streamerFactory, "streamerFactory");
     }
 
     /**
@@ -88,6 +110,7 @@ public class UpstoxFeedClient {
 
     /**
      * Add keys to the local set and, if the streamer is live, subscribe without recreate.
+     * Local set is only retained when the SDK call succeeds (or streamer is not yet up).
      */
     public void subscribe(Set<String> instrumentKeys) {
         if (instrumentKeys == null || instrumentKeys.isEmpty()) {
@@ -108,6 +131,7 @@ public class UpstoxFeedClient {
     /**
      * Remove keys from the local set and, if the streamer is live, unsubscribe without recreate.
      * Streamer stays connected even if the last key is removed (idle) so the next add is cheap.
+     * On SDK failure, keys are restored to the local set.
      */
     public void unsubscribe(Set<String> instrumentKeys) {
         if (instrumentKeys == null || instrumentKeys.isEmpty()) {
@@ -125,7 +149,10 @@ public class UpstoxFeedClient {
                     streamer.unsubscribe(Set.copyOf(toRemove));
                     log.info("Upstox live feed unsubscribed: {}", toRemove);
                 } catch (Exception e) {
-                    log.warn("Upstox unsubscribe failed for {}: {}", toRemove, e.toString());
+                    // Roll back so local set still matches what we believe the SDK holds.
+                    subscribedKeys.addAll(toRemove);
+                    log.warn("Upstox unsubscribe failed for {} (local set restored): {}",
+                            toRemove, e.toString());
                 }
             }
         }
@@ -157,7 +184,7 @@ public class UpstoxFeedClient {
         }
     }
 
-    /** Snapshot of keys TIP wants subscribed (source of truth). */
+    /** Snapshot of keys TIP wants subscribed (source of truth after successful ops). */
     public Set<String> subscribedKeys() {
         return Collections.unmodifiableSet(new HashSet<>(subscribedKeys));
     }
@@ -175,29 +202,42 @@ public class UpstoxFeedClient {
     private void subscribeInternal(Set<String> keys) {
         Set<String> toAdd = new HashSet<>();
         for (String key : keys) {
-            if (key != null && !key.isBlank() && subscribedKeys.add(key)) {
+            if (key != null && !key.isBlank() && !subscribedKeys.contains(key)) {
                 toAdd.add(key);
             }
         }
-        if (toAdd.isEmpty() || streamer == null) {
+        if (toAdd.isEmpty()) {
             return;
         }
+
+        // No live streamer yet: record intent so the next createAndConnectStreamer uses full set.
+        if (streamer == null) {
+            subscribedKeys.addAll(toAdd);
+            return;
+        }
+
         try {
             streamer.subscribe(Set.copyOf(toAdd), Mode.FULL);
+            subscribedKeys.addAll(toAdd);
             log.info("Upstox live feed subscribed: {}", toAdd);
         } catch (Exception e) {
-            log.warn("Upstox subscribe failed for {}: {}", toAdd, e.toString());
+            // Do not keep keys that the SDK rejected — allows a later retry to re-send.
+            log.warn("Upstox subscribe failed for {} (not retained locally): {}",
+                    toAdd, e.toString());
         }
     }
 
     private void createAndConnectStreamer() {
         // Local set is source of truth on (re)build (KD23).
-        streamer = new MarketDataStreamerV3(apiClient, Set.copyOf(subscribedKeys), Mode.FULL);
+        streamer = streamerFactory.apply(apiClient, Set.copyOf(subscribedKeys));
 
         streamer.setOnOpenListener(new OnOpenListener() {
             @Override
             public void onOpen() {
                 marketStatusService.setLiveFeedConnected(true);
+                // Belt-and-suspenders: re-apply full local set after open (SDK reconnect path
+                // also restores its internal map; this covers intentional rebuilds).
+                reapplyLocalSubscriptionsOnOpen();
                 log.info("Upstox live feed connected for keys={}", subscribedKeys());
             }
         });
@@ -240,6 +280,22 @@ public class UpstoxFeedClient {
 
         streamer.autoReconnect(true, 5, 10);
         streamer.connect();
+    }
+
+    /**
+     * Re-subscribe full local set after open. Best-effort; failures leave local set intact
+     * (constructor already passed initial keys).
+     */
+    private void reapplyLocalSubscriptionsOnOpen() {
+        Set<String> keys = Set.copyOf(subscribedKeys);
+        if (keys.isEmpty() || streamer == null) {
+            return;
+        }
+        try {
+            streamer.subscribe(keys, Mode.FULL);
+        } catch (Exception e) {
+            log.debug("Re-apply subscriptions on open skipped/failed: {}", e.toString());
+        }
     }
 
     private void handleMarketUpdate(MarketUpdateV3 update) {

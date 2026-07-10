@@ -17,6 +17,7 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -26,6 +27,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.inOrder;
 
 class MarketBootstrapServiceTest {
 
@@ -81,6 +83,24 @@ class MarketBootstrapServiceTest {
     }
 
     @Test
+    void bootstrapSymbol_emptyCandlesDoNotCountAsSuccessfulTf() {
+        WatchlistEntry entry = pending("NSE_INDEX|Nifty 50", "Nifty 50");
+        repository.save(entry);
+
+        when(marketDataProvider.fetchIntradayCandles(anyString(), anyString()))
+                .thenReturn(List.of());
+        when(marketDataProvider.fetchHistoricalCandles(anyString(), anyString(), any(), any()))
+                .thenReturn(List.of());
+
+        MarketBootstrapService.BootstrapSymbolResult result = service.bootstrapSymbol(entry);
+
+        assertEquals(SymbolBootstrapStatus.FAILED, result.status());
+        assertEquals(0, result.seededTimeframeCount());
+        assertEquals(SymbolBootstrapStatus.FAILED,
+                repository.findBySymbolId(entry.symbolId()).orElseThrow().bootstrapStatus());
+    }
+
+    @Test
     void bootstrapSymbol_failedWhenZeroTfSeeded() {
         WatchlistEntry entry = pending("NSE_EQ|INE002A01018", "RELIANCE");
         repository.save(entry);
@@ -132,15 +152,19 @@ class MarketBootstrapServiceTest {
 
         service.recoverAllActive();
 
-        verify(marketStatusService).setBootstrapReady(org.mockito.ArgumentMatchers.anyInt());
+        var order = inOrder(marketStatusService);
+        order.verify(marketStatusService).setBootstrapPending();
+        order.verify(marketStatusService).setBootstrapReady(org.mockito.ArgumentMatchers.anyInt());
         verify(marketDataProvider, times(1)).connectLiveFeed(any(Set.class), any(TickHandler.class));
         assertEquals(2, connectedKeys.get().size());
+        assertTrue(connectedKeys.get().contains("NSE_INDEX|Nifty 50"));
+        assertTrue(connectedKeys.get().contains("NSE_EQ|INE002A01018"));
         assertEquals(SymbolBootstrapStatus.READY,
                 repository.findBySymbolId("NSE_INDEX|Nifty 50").orElseThrow().bootstrapStatus());
     }
 
     @Test
-    void recoverAllActive_tokenBlank_failsWithoutFetch() {
+    void recoverAllActive_tokenBlank_setsPendingThenFailsWithoutFetch() {
         UpstoxProperties blank = new UpstoxProperties("");
         MarketProperties marketProperties = new MarketProperties(
                 "Nifty 50", "NSE_INDEX|Nifty 50", "5m", List.of("5m"));
@@ -151,7 +175,10 @@ class MarketBootstrapServiceTest {
 
         service.recoverAllActive();
 
-        verify(marketStatusService).setBootstrapFailed(org.mockito.ArgumentMatchers.contains("UPSTOX_ACCESS_TOKEN"));
+        var order = inOrder(marketStatusService);
+        order.verify(marketStatusService).setBootstrapPending();
+        order.verify(marketStatusService).setBootstrapFailed(
+                org.mockito.ArgumentMatchers.contains("UPSTOX_ACCESS_TOKEN"));
         verify(marketDataProvider, never()).fetchIntradayCandles(anyString(), anyString());
     }
 

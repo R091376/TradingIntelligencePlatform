@@ -59,12 +59,35 @@ public class MarketController {
         );
     }
 
+    /**
+     * Global session status, adjusted for chart continuity: when the process is READY but
+     * the primary (chart default) is still PENDING or FAILED, surface that so the FE gate
+     * does not treat multi-symbol partial success as “chart ready”.
+     */
     @GetMapping("/status")
     public MarketStatusResponse getStatus() {
+        BootstrapStatus status = marketStatusService.getBootstrapStatus();
+        String error = marketStatusService.getBootstrapError();
+
+        // Chart shim always reads primary — gate FE on primary, not only global ≥1 READY.
+        Optional<WatchlistEntry> primary = watchlistRepository.findPrimary();
+        if (primary.isPresent() && status == BootstrapStatus.READY) {
+            WatchlistEntry e = primary.get();
+            if (e.bootstrapStatus() == SymbolBootstrapStatus.FAILED) {
+                status = BootstrapStatus.FAILED;
+                error = e.bootstrapError() != null && !e.bootstrapError().isBlank()
+                        ? e.bootstrapError()
+                        : "Primary symbol bootstrap failed";
+            } else if (e.bootstrapStatus() == SymbolBootstrapStatus.PENDING) {
+                status = BootstrapStatus.PENDING;
+                error = null;
+            }
+        }
+
         return new MarketStatusResponse(
                 marketStatusService.getMarketPhase(),
-                marketStatusService.getBootstrapStatus(),
-                marketStatusService.getBootstrapError(),
+                status,
+                error,
                 marketStatusService.getLastSeededAt() != null
                         ? marketStatusService.getLastSeededAt().toString()
                         : null,
@@ -78,6 +101,7 @@ public class MarketController {
             @RequestParam(required = false) Long from,
             @RequestParam(required = false) Long to
     ) {
+        // Global terminal failure (token missing, zero symbols READY, etc.)
         if (marketStatusService.getBootstrapStatus() == BootstrapStatus.FAILED) {
             throw new ResponseStatusException(
                     HttpStatus.SERVICE_UNAVAILABLE,
@@ -89,15 +113,16 @@ public class MarketController {
         String instrumentKey;
         if (primary.isPresent()) {
             WatchlistEntry e = primary.get();
+            // Always honor per-symbol primary status — not only global FAILED.
             if (e.bootstrapStatus() == SymbolBootstrapStatus.FAILED) {
                 throw new ResponseStatusException(
                         HttpStatus.SERVICE_UNAVAILABLE,
-                        e.bootstrapError() != null
+                        e.bootstrapError() != null && !e.bootstrapError().isBlank()
                                 ? e.bootstrapError()
                                 : "Primary symbol bootstrap failed"
                 );
             }
-            // PENDING → empty list (200), not hard error
+            // PENDING (mid multi-symbol recovery or per-symbol seed) → empty list (200)
             if (e.bootstrapStatus() == SymbolBootstrapStatus.PENDING) {
                 return List.of();
             }

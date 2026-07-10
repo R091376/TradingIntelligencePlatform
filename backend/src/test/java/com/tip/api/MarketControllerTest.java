@@ -20,6 +20,7 @@ import java.util.Optional;
 
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -45,7 +46,7 @@ class MarketControllerTest {
 
     @Test
     void getSymbolReturnsPrimaryWhenPresent() throws Exception {
-        when(watchlistRepository.findPrimary()).thenReturn(Optional.of(primaryEntry()));
+        when(watchlistRepository.findPrimary()).thenReturn(Optional.of(entry(SymbolBootstrapStatus.READY, null)));
         when(marketProperties.defaultTimeframe()).thenReturn("5m");
 
         mockMvc.perform(get("/api/market/symbol"))
@@ -72,7 +73,7 @@ class MarketControllerTest {
     @Test
     void getCandlesReturnsPrimaryCandles() throws Exception {
         when(marketStatusService.getBootstrapStatus()).thenReturn(BootstrapStatus.READY);
-        when(watchlistRepository.findPrimary()).thenReturn(Optional.of(primaryEntry()));
+        when(watchlistRepository.findPrimary()).thenReturn(Optional.of(entry(SymbolBootstrapStatus.READY, null)));
         when(marketProperties.defaultTimeframe()).thenReturn("5m");
         when(candleEngine.getAllCandles(NIFTY_KEY, "5m")).thenReturn(List.of(
                 new Candle(1000L, 10.0, 11.0, 9.5, 10.5, 100L)
@@ -100,7 +101,48 @@ class MarketControllerTest {
                 .andExpect(jsonPath("$[0].time").value(2000));
     }
 
-    private static WatchlistEntry primaryEntry() {
+    @Test
+    void getCandles_primaryFailed_returns503EvenIfGlobalReady() throws Exception {
+        when(marketStatusService.getBootstrapStatus()).thenReturn(BootstrapStatus.READY);
+        when(watchlistRepository.findPrimary()).thenReturn(Optional.of(
+                entry(SymbolBootstrapStatus.FAILED, "index seed failed")
+        ));
+
+        mockMvc.perform(get("/api/market/candles"))
+                .andExpect(status().isServiceUnavailable());
+    }
+
+    @Test
+    void getCandles_primaryPending_returnsEmptyArray() throws Exception {
+        when(marketStatusService.getBootstrapStatus()).thenReturn(BootstrapStatus.PENDING);
+        when(watchlistRepository.findPrimary()).thenReturn(Optional.of(
+                entry(SymbolBootstrapStatus.PENDING, null)
+        ));
+
+        mockMvc.perform(get("/api/market/candles"))
+                .andExpect(status().isOk())
+                .andExpect(content().json("[]"));
+    }
+
+    @Test
+    void getStatus_globalReadyButPrimaryFailed_surfacesFailed() throws Exception {
+        when(marketStatusService.getBootstrapStatus()).thenReturn(BootstrapStatus.READY);
+        when(marketStatusService.getBootstrapError()).thenReturn(null);
+        when(marketStatusService.getMarketPhase()).thenReturn(com.tip.market.MarketPhase.OPEN);
+        when(marketStatusService.getLastSeededAt()).thenReturn(null);
+        when(marketStatusService.isLiveFeedConnected()).thenReturn(true);
+        when(marketStatusService.getSeededCandleCount()).thenReturn(10);
+        when(watchlistRepository.findPrimary()).thenReturn(Optional.of(
+                entry(SymbolBootstrapStatus.FAILED, "primary boom")
+        ));
+
+        mockMvc.perform(get("/api/market/status"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bootstrapStatus").value("FAILED"))
+                .andExpect(jsonPath("$.bootstrapError").value("primary boom"));
+    }
+
+    private static WatchlistEntry entry(SymbolBootstrapStatus status, String error) {
         return new WatchlistEntry(
                 NIFTY_KEY,
                 "Nifty 50",
@@ -110,8 +152,8 @@ class MarketControllerTest {
                 "Nifty 50",
                 Instant.parse("2026-07-10T00:00:00Z"),
                 true,
-                SymbolBootstrapStatus.READY,
-                null
+                status,
+                error
         );
     }
 }

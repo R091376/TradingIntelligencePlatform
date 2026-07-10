@@ -54,8 +54,14 @@ public class MarketBootstrapService {
      * Bootstrap all public-active watchlist symbols sequentially (all TFs each),
      * then connect the live feed once with the union of active keys.
      * Global READY if ≥1 symbol READY; FAILED if zero.
+     * <p>
+     * Sets process bootstrap to PENDING at entry so HTTP clients never see a premature
+     * READY while multi-symbol recovery is in flight (HTTP can start before ApplicationRunner ends).
+     * Chart shim still gates on primary entry status in {@code MarketController}.
      */
     public void recoverAllActive() {
+        // Hold PENDING until this method reaches a terminal READY/FAILED.
+        marketStatusService.setBootstrapPending();
         marketStatusService.refreshPhaseFromClock();
 
         if (upstoxProperties.accessToken() == null || upstoxProperties.accessToken().isBlank()) {
@@ -73,7 +79,6 @@ public class MarketBootstrapService {
             return;
         }
 
-        marketStatusService.setBootstrapPending();
         int readyCount = 0;
         int totalCandles = 0;
         int n = active.size();
@@ -129,6 +134,13 @@ public class MarketBootstrapService {
             try {
                 List<Candle> seedCandles = loadSeedCandles(symbolId, timeframe);
                 candleEngine.seed(symbolId, timeframe, seedCandles);
+                // Empty history+intraday is not a successful TF seed (avoids READY with zero candles).
+                if (seedCandles.isEmpty()) {
+                    errors.add(timeframe + ": empty seed (no candles)");
+                    log.warn("Empty seed for {} {} — not counted as successful TF",
+                            symbolId, timeframe);
+                    continue;
+                }
                 seededTfCount++;
                 candleCount += seedCandles.size();
                 log.info("Seeded {} {} candles for {} (count={})",
@@ -157,7 +169,7 @@ public class MarketBootstrapService {
         }
 
         String error = errors.isEmpty()
-                ? "No timeframes seeded"
+                ? "No timeframes seeded with candles"
                 : String.join("; ", errors);
         updateBootstrapStatus(symbolId, SymbolBootstrapStatus.FAILED, error);
         log.error("Symbol FAILED: {} — {}", entry.tradingSymbol(), error);

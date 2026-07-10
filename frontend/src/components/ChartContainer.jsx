@@ -117,13 +117,27 @@ export default function ChartContainer() {
 
     async function init() {
       try {
-        const [info, status] = await Promise.all([fetchSymbol(), fetchMarketStatus()])
+        const info = await fetchSymbol()
         if (disposed) return
-
         setSymbolInfo(info)
+
+        // Poll until multi-symbol recovery leaves PENDING (HTTP can accept before ApplicationRunner ends).
+        let status = await fetchMarketStatus()
+        if (disposed) return
         marketPhaseRef.current = status.marketPhase?.toLowerCase() ?? 'unknown'
 
-        if (status.bootstrapStatus === 'failed') {
+        const normalizeBootstrap = (s) => (s || '').toString().toLowerCase()
+        let polls = 0
+        while (normalizeBootstrap(status.bootstrapStatus) === 'pending' && polls < 120 && !disposed) {
+          setInfoMessage('Loading market data…')
+          await new Promise((r) => setTimeout(r, 1000))
+          status = await fetchMarketStatus()
+          if (disposed) return
+          marketPhaseRef.current = status.marketPhase?.toLowerCase() ?? marketPhaseRef.current
+          polls += 1
+        }
+
+        if (normalizeBootstrap(status.bootstrapStatus) === 'failed') {
           setError(status.bootstrapError || 'Failed to connect to Upstox.')
           setLoading(false)
           updateConnectionStatus('error', marketPhaseRef.current)
@@ -132,6 +146,8 @@ export default function ChartContainer() {
 
         if (marketPhaseRef.current === 'closed') {
           setInfoMessage('Market is closed. Showing last available candle data.')
+        } else {
+          setInfoMessage(null)
         }
 
         const candles = await fetchCandles()
