@@ -6,23 +6,46 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URL;
 import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Objects;
+import java.util.zip.GZIPOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class InstrumentMasterCacheTest {
 
-    private static final Path FIXTURE = Paths.get("src/test/resources/instruments/nse-seed-fixture.json");
+    private static final Path FIXTURE = classpathFixture();
 
     @TempDir
     Path tempDir;
 
     private InstrumentMasterCache cache;
+
+    private static Path classpathFixture() {
+        try {
+            URL url = Objects.requireNonNull(
+                    InstrumentMasterCacheTest.class.getResource("/instruments/nse-seed-fixture.json"),
+                    "classpath fixture /instruments/nse-seed-fixture.json missing");
+            return Paths.get(url.toURI());
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to resolve classpath instrument fixture", e);
+        }
+    }
 
     @BeforeEach
     void setUp() throws Exception {
@@ -109,18 +132,21 @@ class InstrumentMasterCacheTest {
     }
 
     @Test
-    void ensureLoaded_cdnFailureLeavesEmptyCacheNoCrash() {
+    void ensureLoaded_cdnFailureLeavesEmptyCacheNoCrash() throws Exception {
         Path emptyCache = tempDir.resolve("empty-cdn");
-        // Connection refused on discard port — fails fast, no crash.
         InstrumentProperties props = new InstrumentProperties(
-                "http://127.0.0.1:9/NSE.json.gz",
+                "https://cdn.example/NSE.json.gz",
                 emptyCache.toString(),
                 true
         );
+        HttpClient failingClient = mock(HttpClient.class);
+        when(failingClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenThrow(new IOException("CDN unreachable"));
+
         InstrumentMasterCache failing = new InstrumentMasterCache(
                 props,
                 new ObjectMapper(),
-                HttpClient.newHttpClient()
+                failingClient
         );
         failing.ensureLoaded();
         assertTrue(failing.isLoaded());
@@ -129,10 +155,55 @@ class InstrumentMasterCacheTest {
     }
 
     @Test
+    void ensureLoaded_invalidDownloadKeepsPreviousCache() throws Exception {
+        Path cacheDir = tempDir.resolve("keep-good-cache");
+        Files.createDirectories(cacheDir);
+        Path cacheFile = cacheDir.resolve("NSE.json.gz");
+
+        // Seed a valid prior cache from the fixture.
+        Files.write(cacheFile, gzipBytes(Files.readAllBytes(FIXTURE)));
+
+        InstrumentProperties props = new InstrumentProperties(
+                "https://cdn.example/NSE.json.gz",
+                cacheDir.toString(),
+                true
+        );
+
+        // HTTP 200 with corrupt body must not overwrite the good cache.
+        @SuppressWarnings("unchecked")
+        HttpResponse<InputStream> badResponse = mock(HttpResponse.class);
+        when(badResponse.statusCode()).thenReturn(200);
+        when(badResponse.body()).thenReturn(new ByteArrayInputStream("not-gzip".getBytes()));
+
+        HttpClient badPayloadClient = mock(HttpClient.class);
+        when(badPayloadClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(badResponse);
+
+        InstrumentMasterCache reloading = new InstrumentMasterCache(
+                props,
+                new ObjectMapper(),
+                badPayloadClient
+        );
+        reloading.ensureLoaded();
+
+        assertTrue(Files.isRegularFile(cacheFile), "prior good cache must remain");
+        assertEquals("NSE_EQ|INE002A01018", reloading.resolve("RELIANCE").instrumentKey());
+        assertEquals("NSE_INDEX|Nifty 50", reloading.resolve("Nifty 50").instrumentKey());
+    }
+
+    @Test
     void normalize_collapsesWhitespaceAndUppercases() {
         assertEquals("NIFTY 50", InstrumentMasterCache.normalize("  nifty   50  "));
         assertEquals("RELIANCE", InstrumentMasterCache.normalize("reliance"));
         assertEquals("", InstrumentMasterCache.normalize("   "));
         assertEquals("", InstrumentMasterCache.normalize(null));
+    }
+
+    private static byte[] gzipBytes(byte[] raw) throws IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        try (GZIPOutputStream gzip = new GZIPOutputStream(baos)) {
+            gzip.write(raw);
+        }
+        return baos.toByteArray();
     }
 }

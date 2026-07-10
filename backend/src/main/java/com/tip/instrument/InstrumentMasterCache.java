@@ -1,5 +1,7 @@
 package com.tip.instrument;
 
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tip.config.InstrumentProperties;
@@ -295,12 +297,13 @@ public class InstrumentMasterCache {
             log.warn("tip.instruments.master-url is blank; skipping download");
             return;
         }
+        Path temp = null;
         try {
             Path parent = cacheFile.getParent();
             if (parent != null) {
                 Files.createDirectories(parent);
             }
-            Path temp = cacheFile.resolveSibling(CACHE_FILE_NAME + ".tmp");
+            temp = cacheFile.resolveSibling(CACHE_FILE_NAME + ".tmp");
             HttpRequest request = HttpRequest.newBuilder(URI.create(url))
                     .timeout(HTTP_TIMEOUT)
                     .GET()
@@ -314,10 +317,18 @@ public class InstrumentMasterCache {
                 try (InputStream ignored = response.body()) {
                     // drain
                 }
+                Files.deleteIfExists(temp);
                 return;
             }
             try (InputStream body = response.body()) {
                 Files.copy(body, temp, StandardCopyOption.REPLACE_EXISTING);
+            }
+            // Validate gzip + JSON array before replacing a previously good cache.
+            if (!isValidGzipJsonArray(temp)) {
+                log.warn("Downloaded instrument master failed gzip/JSON validation from {}; "
+                        + "keeping previous cache if present", url);
+                Files.deleteIfExists(temp);
+                return;
             }
             try {
                 Files.move(temp, cacheFile,
@@ -325,9 +336,33 @@ public class InstrumentMasterCache {
             } catch (IOException atomicFailed) {
                 Files.move(temp, cacheFile, StandardCopyOption.REPLACE_EXISTING);
             }
+            temp = null; // successfully promoted
             log.info("Instrument master downloaded to {}", cacheFile);
         } catch (Exception e) {
             log.warn("Instrument master download failed from {}: {}", url, e.toString());
+            if (temp != null) {
+                try {
+                    Files.deleteIfExists(temp);
+                } catch (IOException ignored) {
+                    // best-effort cleanup
+                }
+            }
+        }
+    }
+
+    /**
+     * Cheap structural check: file is gzip-compressed and the decompressed content
+     * begins with a JSON array. Avoids promoting HTTP 200 garbage over a prior good cache.
+     */
+    private boolean isValidGzipJsonArray(Path path) {
+        try (InputStream fileIn = Files.newInputStream(path);
+             InputStream gzipIn = new GZIPInputStream(fileIn);
+             JsonParser parser = objectMapper.getFactory().createParser(gzipIn)) {
+            JsonToken token = parser.nextToken();
+            return token == JsonToken.START_ARRAY;
+        } catch (Exception e) {
+            log.debug("Instrument master validation failed for {}: {}", path, e.toString());
+            return false;
         }
     }
 
