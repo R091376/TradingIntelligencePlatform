@@ -103,11 +103,6 @@ public class UpstoxFeedClient {
         }
     }
 
-    /** Convenience for single-key connect. */
-    public void connect(String instrumentKey, TickHandler handler) {
-        connect(Set.of(instrumentKey), handler);
-    }
-
     /**
      * Add keys to the local set and, if the streamer is live, subscribe without recreate.
      * Local set is only retained when the SDK call succeeds (or streamer is not yet up).
@@ -119,13 +114,6 @@ public class UpstoxFeedClient {
         synchronized (lock) {
             subscribeInternal(instrumentKeys);
         }
-    }
-
-    public void subscribe(String instrumentKey) {
-        if (instrumentKey == null || instrumentKey.isBlank()) {
-            return;
-        }
-        subscribe(Set.of(instrumentKey));
     }
 
     /**
@@ -158,13 +146,6 @@ public class UpstoxFeedClient {
         }
     }
 
-    public void unsubscribe(String instrumentKey) {
-        if (instrumentKey == null || instrumentKey.isBlank()) {
-            return;
-        }
-        unsubscribe(Set.of(instrumentKey));
-    }
-
     /**
      * Full shutdown: disconnect streamer and clear local subscription set.
      */
@@ -187,10 +168,6 @@ public class UpstoxFeedClient {
     /** Snapshot of keys TIP wants subscribed (source of truth after successful ops). */
     public Set<String> subscribedKeys() {
         return Collections.unmodifiableSet(new HashSet<>(subscribedKeys));
-    }
-
-    public long tickCount() {
-        return tickCount.get();
     }
 
     public boolean isStreamerLive() {

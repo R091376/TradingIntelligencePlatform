@@ -341,7 +341,7 @@ public class WatchlistService {
         liveWebSocketHandler.notifySymbolRemoved(symbolId);
 
         watchlistRepository.remove(symbolId);
-        log.info("Watchlist remove complete (hard-delete): {}", symbolId);
+        log.info("Watchlist remove complete: {}", symbolId);
     }
 
     private Object lockFor(String symbolId) {

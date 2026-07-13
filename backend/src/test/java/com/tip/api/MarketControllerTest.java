@@ -45,6 +45,18 @@ class MarketControllerTest {
     private WatchlistRepository watchlistRepository;
 
     @Test
+    void getTimeframesReturnsDefaultsAndSupported() throws Exception {
+        when(marketProperties.defaultTimeframe()).thenReturn("5m");
+        when(marketProperties.supportedTimeframes()).thenReturn(List.of("1m", "5m", "15m", "1h", "4h", "1d"));
+
+        mockMvc.perform(get("/api/market/timeframes"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.defaultTimeframe").value("5m"))
+                .andExpect(jsonPath("$.supported[0]").value("1m"))
+                .andExpect(jsonPath("$.supported[3]").value("1h"));
+    }
+
+    @Test
     void getSymbolReturnsPrimaryWhenPresent() throws Exception {
         when(watchlistRepository.findPrimary()).thenReturn(Optional.of(entry(SymbolBootstrapStatus.READY, null)));
         when(marketProperties.defaultTimeframe()).thenReturn("5m");

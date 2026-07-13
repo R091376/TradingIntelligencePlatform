@@ -78,16 +78,6 @@ public class CandleEngine {
         }
     }
 
-    public List<Candle> getClosedCandles(String instrumentKey, String timeframe) {
-        SymbolState state = stateByKey.get(stateKey(instrumentKey, timeframe));
-        if (state == null) {
-            return List.of();
-        }
-        synchronized (state) {
-            return List.copyOf(state.closedCandles);
-        }
-    }
-
     public Optional<Candle> getCurrentCandle(String instrumentKey, String timeframe) {
         SymbolState state = stateByKey.get(stateKey(instrumentKey, timeframe));
         if (state == null) {
@@ -108,7 +98,20 @@ public class CandleEngine {
         synchronized (state) {
             List<Candle> all = new ArrayList<>(state.closedCandles);
             if (state.currentCandle != null) {
-                all.add(state.currentCandle.toCandle());
+                Candle current = state.currentCandle.toCandle();
+                if (all.isEmpty()) {
+                    all.add(current);
+                } else {
+                    long lastTime = all.get(all.size() - 1).time();
+                    if (current.time() > lastTime) {
+                        all.add(current);
+                    } else if (current.time() == lastTime) {
+                        // Live in-progress replaces matching seed bar
+                        all.set(all.size() - 1, current);
+                    }
+                    // current.time() < lastTime: misaligned live bar — omit so clients
+                    // never see non-monotonic series (LWC rejects out-of-order data).
+                }
             }
             return Collections.unmodifiableList(all);
         }
@@ -129,8 +132,21 @@ public class CandleEngine {
 
     private void closeCurrentCandle(SymbolState state, String instrumentKey, String timeframe) {
         Candle closed = state.currentCandle.toCandle();
-        state.closedCandles.add(closed);
         state.currentCandle = null;
+        if (!state.closedCandles.isEmpty()) {
+            long lastTime = state.closedCandles.get(state.closedCandles.size() - 1).time();
+            if (closed.time() < lastTime) {
+                // Drop misaligned live bar rather than corrupt series order
+                return;
+            }
+            if (closed.time() == lastTime) {
+                state.closedCandles.set(state.closedCandles.size() - 1, closed);
+                eventPublisher.publishEvent(new CandleClosedEvent(instrumentKey, timeframe, closed));
+                publishUpdated(instrumentKey, timeframe, closed, true);
+                return;
+            }
+        }
+        state.closedCandles.add(closed);
         eventPublisher.publishEvent(new CandleClosedEvent(instrumentKey, timeframe, closed));
         publishUpdated(instrumentKey, timeframe, closed, true);
     }

@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @RestController
@@ -39,6 +40,14 @@ public class MarketController {
         this.marketProperties = marketProperties;
         this.marketStatusService = marketStatusService;
         this.watchlistRepository = watchlistRepository;
+    }
+
+    @GetMapping("/timeframes")
+    public Map<String, Object> getTimeframes() {
+        return Map.of(
+                "defaultTimeframe", marketProperties.defaultTimeframe(),
+                "supported", marketProperties.supportedTimeframes()
+        );
     }
 
     @GetMapping("/symbol")

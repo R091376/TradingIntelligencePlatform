@@ -30,23 +30,14 @@ async function handleResponse(response) {
   return response.json()
 }
 
-/**
- * Compat shim: primary symbol from /api/market/symbol.
- * Prefer watchlist[0] after init (KD25) — this is only a fallback.
- */
-export async function fetchSymbol() {
-  const response = await fetch('/api/market/symbol')
-  return handleResponse(response)
-}
-
 export async function fetchMarketStatus() {
   const response = await fetch('/api/market/status')
   return handleResponse(response)
 }
 
 /**
- * Supported timeframes. Falls back to hardcoded defaults when the backend
- * has no /api/market/timeframes endpoint.
+ * Supported timeframes from GET /api/market/timeframes.
+ * Falls back to hardcoded defaults if the request fails.
  */
 export async function fetchTimeframes() {
   try {

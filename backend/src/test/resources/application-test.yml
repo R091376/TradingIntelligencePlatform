@@ -1,0 +1,9 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/tip_test
+    username: postgres
+    password: admin
+
+tip:
+  market:
+    live-feed-enabled: false

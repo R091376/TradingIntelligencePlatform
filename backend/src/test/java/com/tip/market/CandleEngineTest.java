@@ -52,6 +52,28 @@ class CandleEngineTest {
     }
 
     @Test
+    void oneHourLiveBarAlignsToSessionOpenNotWallClock() {
+        // Seed last closed = 10:15 (Upstox style); live tick at 10:40 must continue 10:15, not 10:00
+        long t915 = ZonedDateTime.of(2026, 7, 13, 9, 15, 0, 0, CandleBoundaryUtils.NSE_ZONE).toEpochSecond();
+        long t1015 = ZonedDateTime.of(2026, 7, 13, 10, 15, 0, 0, CandleBoundaryUtils.NSE_ZONE).toEpochSecond();
+        candleEngine.seed(INSTRUMENT, "1h", List.of(
+                new Candle(t915, 100, 101, 99, 100.5, 1000),
+                new Candle(t1015, 100.5, 102, 100, 101, 500)
+        ));
+
+        ZonedDateTime tickAt = ZonedDateTime.of(2026, 7, 13, 10, 40, 0, 0, CandleBoundaryUtils.NSE_ZONE);
+        candleEngine.processTick(tick(tickAt, 101.5, 2000), "1h");
+
+        List<Candle> all = candleEngine.getAllCandles(INSTRUMENT, "1h");
+        assertEquals(2, all.size());
+        assertEquals(t915, all.get(0).time());
+        assertEquals(t1015, all.get(1).time());
+        // Monotonic
+        assertTrue(all.get(1).time() > all.get(0).time());
+        assertEquals(101.5, all.get(1).close());
+    }
+
+    @Test
     void closesCandleWhenBoundaryCrosses() {
         ZonedDateTime first = ZonedDateTime.of(2026, 7, 7, 14, 44, 10, 0, CandleBoundaryUtils.NSE_ZONE);
         ZonedDateTime second = ZonedDateTime.of(2026, 7, 7, 14, 45, 10, 0, CandleBoundaryUtils.NSE_ZONE);

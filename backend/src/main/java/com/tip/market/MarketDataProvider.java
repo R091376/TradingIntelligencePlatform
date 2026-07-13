@@ -24,13 +24,6 @@ public interface MarketDataProvider {
     void connectLiveFeed(Set<String> instrumentKeys, TickHandler handler);
 
     /**
-     * Single-key convenience; delegates to multi-key connect.
-     */
-    default void connectLiveFeed(String instrumentKey, TickHandler handler) {
-        connectLiveFeed(Set.of(instrumentKey), handler);
-    }
-
-    /**
      * Dynamically subscribe additional instruments on the existing streamer (no recreate).
      */
     void subscribeInstruments(Set<String> instrumentKeys);

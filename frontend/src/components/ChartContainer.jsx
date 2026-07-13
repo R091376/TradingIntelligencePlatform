@@ -399,11 +399,21 @@ export default function ChartContainer() {
               if (message.timeframe !== timeframeRef.current) return
               if (!message.candle) return
               upsertCandle(message.candle)
-              seriesRef.current?.update(
-                chartTypeRef.current === 'line'
-                  ? toLinePoint(message.candle)
-                  : toCandlestickPoint(message.candle),
-              )
+              // LWC requires update time >= last series time; skip stale/misaligned bars
+              // rather than throwing (which surfaces as a broken live connection).
+              try {
+                seriesRef.current?.update(
+                  chartTypeRef.current === 'line'
+                    ? toLinePoint(message.candle)
+                    : toCandlestickPoint(message.candle),
+                )
+              } catch {
+                if (seriesRef.current) {
+                  applySeriesData(seriesRef.current, chartTypeRef.current, {
+                    resetView: false,
+                  })
+                }
+              }
             }
           },
         })

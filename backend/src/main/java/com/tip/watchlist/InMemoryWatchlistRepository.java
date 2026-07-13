@@ -1,7 +1,7 @@
 package com.tip.watchlist;
 
-import org.springframework.context.annotation.Primary;
-import org.springframework.stereotype.Component;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.stereotype.Repository;
 
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -14,15 +14,12 @@ import java.util.Optional;
 /**
  * Thread-safe ordered watchlist store backed by a {@link LinkedHashMap}.
  * <p>
- * Insertion order defines primary ({@link #findPrimary()}) and is never derived from
- * {@code addedAt}. On update, existing {@code addedAt} and map position are preserved;
- * callers supply {@code addedAt} on first insert.
- * <p>
- * Trading-symbol index is last-writer-wins; uniqueness among non-REMOVING entries is a
- * service-layer invariant (see {@link WatchlistRepository}).
+ * Active when {@code tip.watchlist.store=memory} (or profile {@code memory}).
+ * Watchlist is process-local: cleared on restart; remove is hard-delete.
+ * Pure unit tests may also {@code new} this class without Spring.
  */
-@Component
-@Primary
+@Repository
+@ConditionalOnProperty(name = "tip.watchlist.store", havingValue = "memory")
 public class InMemoryWatchlistRepository implements WatchlistRepository {
 
     private final Object lock = new Object();
@@ -108,7 +105,6 @@ public class InMemoryWatchlistRepository implements WatchlistRepository {
             WatchlistEntry existing = byId.get(entry.symbolId());
             WatchlistEntry toStore;
             if (existing != null) {
-                // Preserve addedAt and LinkedHashMap position (put on existing key does not reorder).
                 toStore = new WatchlistEntry(
                         entry.symbolId(),
                         entry.tradingSymbol(),
