@@ -51,7 +51,8 @@ class WatchlistServiceEnsureSeededTest {
                 mock(MarketDataProvider.class),
                 mock(CandleEngine.class),
                 mock(LiveCandleBroadcaster.class),
-                mock(LiveWebSocketHandler.class)
+                mock(LiveWebSocketHandler.class),
+                mock(org.springframework.context.ApplicationEventPublisher.class)
         );
     }
 

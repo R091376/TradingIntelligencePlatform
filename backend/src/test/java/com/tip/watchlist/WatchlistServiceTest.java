@@ -30,6 +30,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -71,7 +72,8 @@ class WatchlistServiceTest {
                 marketDataProvider,
                 candleEngine,
                 liveCandleBroadcaster,
-                liveWebSocketHandler
+                liveWebSocketHandler,
+                mock(org.springframework.context.ApplicationEventPublisher.class)
         );
     }
 

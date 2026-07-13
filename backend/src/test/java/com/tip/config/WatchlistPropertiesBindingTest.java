@@ -18,19 +18,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @ActiveProfiles("test")
 class WatchlistPropertiesBindingTest {
 
-    private static final List<String> EXPECTED_SEED_SYMBOLS = List.of(
-            "Nifty 50",
-            "RELIANCE",
-            "TCS",
-            "HDFCBANK",
-            "INFY",
-            "ICICIBANK",
-            "HINDUNILVR",
-            "ITC",
-            "SBIN",
-            "BHARTIARTL"
-    );
-
     @Autowired
     private WatchlistProperties watchlistProperties;
 
@@ -43,9 +30,8 @@ class WatchlistPropertiesBindingTest {
     @Test
     void watchlistProperties_bindSeedListAndCaps() {
         assertNotNull(watchlistProperties);
-        assertEquals(EXPECTED_SEED_SYMBOLS, watchlistProperties.seedSymbols());
-        assertEquals("NSE_INDEX|Nifty 50",
-                watchlistProperties.seedInstrumentKeys().get("Nifty 50"));
+        // application-test.yml clears seed-symbols so tip_test is not polluted
+        assertEquals(List.of(), watchlistProperties.seedSymbols());
         assertEquals(40, watchlistProperties.softWarnSize());
         assertEquals(50, watchlistProperties.hardMaxSize());
     }

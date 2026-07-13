@@ -88,6 +88,34 @@ class CandleEngineTest {
     }
 
     @Test
+    void getClosedCandlesExcludesInProgressBar() {
+        ZonedDateTime first = ZonedDateTime.of(2026, 7, 7, 14, 44, 10, 0, CandleBoundaryUtils.NSE_ZONE);
+        ZonedDateTime second = ZonedDateTime.of(2026, 7, 7, 14, 45, 10, 0, CandleBoundaryUtils.NSE_ZONE);
+
+        candleEngine.processTick(tick(first, 100.0, 1000), TIMEFRAME);
+        candleEngine.processTick(tick(second, 101.0, 1100), TIMEFRAME);
+
+        List<Candle> closed = candleEngine.getClosedCandles(INSTRUMENT, TIMEFRAME);
+        List<Candle> all = candleEngine.getAllCandles(INSTRUMENT, TIMEFRAME);
+
+        assertEquals(1, closed.size());
+        assertEquals(100.0, closed.get(0).close());
+        assertEquals(2, all.size());
+        assertEquals(101.0, all.get(1).close());
+    }
+
+    @Test
+    void seedDoesNotPublishClosedEvents() {
+        long t = ZonedDateTime.of(2026, 7, 7, 10, 0, 0, 0, CandleBoundaryUtils.NSE_ZONE).toEpochSecond();
+        candleEngine.seed(INSTRUMENT, TIMEFRAME, List.of(
+                new Candle(t, 1, 1, 1, 1, 0),
+                new Candle(t + 300, 2, 2, 2, 2, 0)
+        ));
+        assertEquals(0, closedEvents.size());
+        assertEquals(2, candleEngine.getClosedCandles(INSTRUMENT, TIMEFRAME).size());
+    }
+
+    @Test
     void accumulatesVolumeFromVttDelta() {
         ZonedDateTime tickTime = ZonedDateTime.of(2026, 7, 7, 14, 45, 10, 0, CandleBoundaryUtils.NSE_ZONE);
 

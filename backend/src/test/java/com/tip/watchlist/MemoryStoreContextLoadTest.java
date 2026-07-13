@@ -1,5 +1,8 @@
 package com.tip.watchlist;
 
+import com.tip.journal.NoOpPatternJournal;
+import com.tip.journal.PatternJournal;
+import com.tip.patterns.PatternFeatureGuard;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -34,6 +37,12 @@ class MemoryStoreContextLoadTest {
     @Autowired
     private Environment environment;
 
+    @Autowired
+    private PatternJournal patternJournal;
+
+    @Autowired
+    private PatternFeatureGuard patternFeatureGuard;
+
     @Test
     void contextLoadsWithInMemoryWatchlistAndNoDataSource() {
         assertNotNull(watchlistRepository);
@@ -42,5 +51,8 @@ class MemoryStoreContextLoadTest {
         assertTrue(context.getBeansOfType(DataSource.class).isEmpty(),
                 "memory mode must not create a DataSource");
         assertFalse(environment.getProperty("spring.flyway.enabled", Boolean.class, true));
+        assertTrue(patternJournal instanceof NoOpPatternJournal);
+        assertFalse(patternJournal.isActive());
+        assertFalse(patternFeatureGuard.isFullyEnabled());
     }
 }

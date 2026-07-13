@@ -9,8 +9,10 @@ import com.tip.instrument.ResolvedInstrument;
 import com.tip.market.CandleEngine;
 import com.tip.market.MarketBootstrapService;
 import com.tip.market.MarketDataProvider;
+import com.tip.watchlist.event.WatchlistSymbolRemovedEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -51,6 +53,7 @@ public class WatchlistService {
     private final CandleEngine candleEngine;
     private final LiveCandleBroadcaster liveCandleBroadcaster;
     private final LiveWebSocketHandler liveWebSocketHandler;
+    private final ApplicationEventPublisher eventPublisher;
 
     /**
      * Global mutex for hard-max capacity reservation (countActive + insert PENDING).
@@ -69,7 +72,8 @@ public class WatchlistService {
             MarketDataProvider marketDataProvider,
             CandleEngine candleEngine,
             LiveCandleBroadcaster liveCandleBroadcaster,
-            LiveWebSocketHandler liveWebSocketHandler
+            LiveWebSocketHandler liveWebSocketHandler,
+            ApplicationEventPublisher eventPublisher
     ) {
         this.watchlistRepository = watchlistRepository;
         this.watchlistProperties = watchlistProperties;
@@ -78,6 +82,7 @@ public class WatchlistService {
         this.marketDataProvider = marketDataProvider;
         this.candleEngine = candleEngine;
         this.liveCandleBroadcaster = liveCandleBroadcaster;
+        this.eventPublisher = eventPublisher;
         this.liveWebSocketHandler = liveWebSocketHandler;
     }
 
@@ -341,6 +346,7 @@ public class WatchlistService {
         liveWebSocketHandler.notifySymbolRemoved(symbolId);
 
         watchlistRepository.remove(symbolId);
+        eventPublisher.publishEvent(new WatchlistSymbolRemovedEvent(symbolId));
         log.info("Watchlist remove complete: {}", symbolId);
     }
 

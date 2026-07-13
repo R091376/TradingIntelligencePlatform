@@ -52,12 +52,14 @@ public class CandleEngine {
                 state.closedCandles.addAll(candles);
             }
         }
+        // seed does not publish CandleClosedEvent (live-forward pattern eval)
     }
 
     public void processTick(Tick tick, String timeframe) {
         int intervalMinutes = TimeframeParser.parse(timeframe).intervalMinutes();
         SymbolState state = stateFor(tick.instrumentKey(), timeframe);
 
+        List<Object> pendingEvents = new ArrayList<>(4);
         synchronized (state) {
             long candleStart = CandleBoundaryUtils.floorToCandleStartEpochSecond(
                     tick.timestampMs(),
@@ -67,14 +69,28 @@ public class CandleEngine {
 
             if (state.currentCandle == null || state.currentCandle.time != candleStart) {
                 if (state.currentCandle != null) {
-                    closeCurrentCandle(state, tick.instrumentKey(), timeframe);
+                    Optional<Candle> closed = closeCurrentCandle(state);
+                    closed.ifPresent(c -> {
+                        pendingEvents.add(new CandleClosedEvent(tick.instrumentKey(), timeframe, c));
+                        pendingEvents.add(new CandleUpdatedEvent(tick.instrumentKey(), timeframe, c, true));
+                    });
                 }
                 state.currentCandle = MutableCandle.open(candleStart, tick.price(), volumeDelta);
             } else {
                 state.currentCandle.update(tick.price(), volumeDelta);
             }
 
-            publishUpdated(tick.instrumentKey(), timeframe, state.currentCandle.toCandle(), false);
+            pendingEvents.add(new CandleUpdatedEvent(
+                    tick.instrumentKey(),
+                    timeframe,
+                    state.currentCandle.toCandle(),
+                    false
+            ));
+        }
+
+        // Publish outside the per-series lock so listeners may do I/O / read engine state.
+        for (Object event : pendingEvents) {
+            eventPublisher.publishEvent(event);
         }
     }
 
@@ -90,6 +106,23 @@ public class CandleEngine {
         }
     }
 
+    /**
+     * Closed bars only (no in-progress candle). Preferred lookback for indicators and patterns.
+     */
+    public List<Candle> getClosedCandles(String instrumentKey, String timeframe) {
+        SymbolState state = stateByKey.get(stateKey(instrumentKey, timeframe));
+        if (state == null) {
+            return List.of();
+        }
+        synchronized (state) {
+            return Collections.unmodifiableList(new ArrayList<>(state.closedCandles));
+        }
+    }
+
+    /**
+     * Closed bars plus current in-progress bar (if any). For chart REST/WS seeding only —
+     * do not use for ATR/Donchian/pattern lookbacks ({@link #getClosedCandles}).
+     */
     public List<Candle> getAllCandles(String instrumentKey, String timeframe) {
         SymbolState state = stateByKey.get(stateKey(instrumentKey, timeframe));
         if (state == null) {
@@ -130,25 +163,25 @@ public class CandleEngine {
         stateByKey.keySet().removeIf(k -> k.startsWith(prefix));
     }
 
-    private void closeCurrentCandle(SymbolState state, String instrumentKey, String timeframe) {
+    /**
+     * Mutates state only; caller publishes events outside the lock.
+     */
+    private Optional<Candle> closeCurrentCandle(SymbolState state) {
         Candle closed = state.currentCandle.toCandle();
         state.currentCandle = null;
         if (!state.closedCandles.isEmpty()) {
             long lastTime = state.closedCandles.get(state.closedCandles.size() - 1).time();
             if (closed.time() < lastTime) {
                 // Drop misaligned live bar rather than corrupt series order
-                return;
+                return Optional.empty();
             }
             if (closed.time() == lastTime) {
                 state.closedCandles.set(state.closedCandles.size() - 1, closed);
-                eventPublisher.publishEvent(new CandleClosedEvent(instrumentKey, timeframe, closed));
-                publishUpdated(instrumentKey, timeframe, closed, true);
-                return;
+                return Optional.of(closed);
             }
         }
         state.closedCandles.add(closed);
-        eventPublisher.publishEvent(new CandleClosedEvent(instrumentKey, timeframe, closed));
-        publishUpdated(instrumentKey, timeframe, closed, true);
+        return Optional.of(closed);
     }
 
     private long computeVolumeDelta(SymbolState state, long volumeTradedToday) {
@@ -167,10 +200,6 @@ public class CandleEngine {
         long delta = volumeTradedToday - state.lastVtt;
         state.lastVtt = volumeTradedToday;
         return delta;
-    }
-
-    private void publishUpdated(String instrumentKey, String timeframe, Candle candle, boolean isFinal) {
-        eventPublisher.publishEvent(new CandleUpdatedEvent(instrumentKey, timeframe, candle, isFinal));
     }
 
     private SymbolState stateFor(String instrumentKey, String timeframe) {

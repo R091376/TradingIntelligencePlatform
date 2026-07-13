@@ -30,6 +30,8 @@ tip:
     supported-timeframes: [1m, 5m, 15m, 1h, 4h, 1d]
     live-feed-enabled: true
     candle-update-throttle-ms: 1000
+    # Reconcile NSE market phase from wall clock (session close without feed).
+    phase-refresh-ms: 30000
     # Historical seed: calendar days ending yesterday (today = intraday API).
     # Was hardcoded to 5 days (~3 trading sessions). Per-TF overrides below.
     historical-lookback-days: 30
@@ -40,6 +42,28 @@ tip:
       1h: 180
       4h: 365
       1d: 730
+  pattern:
+    enabled: true
+    atr-period: 14
+    stats-min-sample-size: 20
+    breakout:
+      lookback-candles: 20
+      volume-avg-period: 20
+      confirmation-mode: both
+      volume-multiplier: 1.5
+      retest-atr-mult: 0.25
+      strengthen-atr-mult: 1.0
+      success-rr: 2.0
+      success-atr-mult-without-retest: 2.0
+      detector-version: breakout-v1
+    expiry:
+      session-close-timeframes: [1m, 5m, 15m, 1h]
+      max-sessions-4h: 5
+      max-candles-4h: 60
+      max-candles-1d: 30
+    ws:
+      # Journal always records all stages; WS may filter later.
+      broadcast-stages: [detected, confirmed, retested, strengthened, succeeded, failed, expired]
   watchlist:
     # postgres (default) = durable watchlist in PostgreSQL.
     # memory = in-process only, no DB required. Enable with:

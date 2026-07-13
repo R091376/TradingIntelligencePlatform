@@ -11,7 +11,8 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
         MarketProperties.class,
         CorsProperties.class,
         WatchlistProperties.class,
-        InstrumentProperties.class
+        InstrumentProperties.class,
+        PatternProperties.class
 })
 public class WebConfig implements WebMvcConfigurer {
 
