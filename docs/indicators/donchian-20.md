@@ -28,17 +28,22 @@ DonchianHigh_n = \max_{c \in W} high_c
 DonchianLow_n = \min_{c \in W} low_c
 \]
 
-### Prior window (for breakout detection)
+### Prior window (for breakout / breakdown detection)
 
-For detecting a breakout on the **latest** closed bar \(c_t\), the reference level uses the **prior** `n` bars only (excluding \(c_t\)):
+For detecting on the **latest** closed bar \(c_t\), the reference level uses the **prior** `n` bars only (excluding \(c_t\)):
 
 \[
 refBreakout = \max(high \text{ of } c_{t-n},\ldots,c_{t-1})
 \]
 
-Detected when \(close_t > refBreakout\).
+\[
+refBreakdown = \min(low \text{ of } c_{t-n},\ldots,c_{t-1})
+\]
 
-If the current bar were included in the max high, `close > max(high)` would almost never fire (only on flat-top closes). Prior-window is the intentional definition for TIP Breakout.
+- **Breakout** (`DonchianIndicator.priorHighestHigh`): Detected when \(close_t > refBreakout\).
+- **Breakdown** (`DonchianIndicator.priorLowestLow`): Detected when \(close_t < refBreakdown\).
+
+If the current bar were included in the max high, `close > max(high)` would almost never fire (only on flat-top closes). Symmetric for lows. Prior-window is the intentional definition for TIP Breakout / Breakdown.
 
 ## Warmup
 
@@ -60,3 +65,4 @@ Price (same as OHLC).
 ## Related
 
 - Breakout stages: `docs/patterns/breakout.md`
+- Breakdown stages: `docs/patterns/breakdown.md`

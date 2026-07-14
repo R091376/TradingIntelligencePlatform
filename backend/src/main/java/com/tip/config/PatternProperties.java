@@ -1,6 +1,7 @@
 package com.tip.config;
 
 import com.tip.patterns.breakout.BreakoutConfig;
+import com.tip.patterns.breakdown.BreakdownConfig;
 import com.tip.patterns.model.ConfirmationMode;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
@@ -16,6 +17,7 @@ public class PatternProperties {
     private int atrPeriod = 14;
     private int statsMinSampleSize = 20;
     private Breakout breakout = new Breakout();
+    private Breakdown breakdown = new Breakdown();
     private Expiry expiry = new Expiry();
     private Ws ws = new Ws();
 
@@ -51,6 +53,14 @@ public class PatternProperties {
         this.breakout = breakout != null ? breakout : new Breakout();
     }
 
+    public Breakdown getBreakdown() {
+        return breakdown;
+    }
+
+    public void setBreakdown(Breakdown breakdown) {
+        this.breakdown = breakdown != null ? breakdown : new Breakdown();
+    }
+
     public Expiry getExpiry() {
         return expiry;
     }
@@ -82,12 +92,59 @@ public class PatternProperties {
         );
     }
 
+    public BreakdownConfig toBreakdownConfig() {
+        return new BreakdownConfig(
+                breakdown.lookbackCandles,
+                atrPeriod,
+                breakdown.volumeAvgPeriod,
+                ConfirmationMode.fromConfig(breakdown.confirmationMode),
+                breakdown.volumeMultiplier,
+                breakdown.retestAtrMult,
+                breakdown.strengthenAtrMult,
+                breakdown.successRr,
+                breakdown.successAtrMultWithoutRetest,
+                breakdown.detectorVersion
+        );
+    }
+
     public boolean isSessionCloseTimeframe(String timeframe) {
         return expiry.sessionCloseTimeframes().contains(timeframe);
     }
 
+    /**
+     * Survives overnight / process restart via hydrate (not session_end expire).
+     * {@code 1h} uses 4h-style max-sessions + max-candles; {@code 1d} max-candles only.
+     */
     public boolean isMultiDayTimeframe(String timeframe) {
-        return "4h".equals(timeframe) || "1d".equals(timeframe);
+        return "1h".equals(timeframe) || "4h".equals(timeframe) || "1d".equals(timeframe);
+    }
+
+    public int maxSessionsFor(String timeframe) {
+        if ("1h".equals(timeframe)) {
+            return expiry.getMaxSessions1h();
+        }
+        if ("4h".equals(timeframe)) {
+            return expiry.getMaxSessions4h();
+        }
+        return Integer.MAX_VALUE;
+    }
+
+    public int maxCandlesFor(String timeframe) {
+        if ("1h".equals(timeframe)) {
+            return expiry.getMaxCandles1h();
+        }
+        if ("4h".equals(timeframe)) {
+            return expiry.getMaxCandles4h();
+        }
+        if ("1d".equals(timeframe)) {
+            return expiry.getMaxCandles1d();
+        }
+        return Integer.MAX_VALUE;
+    }
+
+    /** TFs that bump sessions_seen on market close (1h, 4h). */
+    public boolean tracksSessionsOnClose(String timeframe) {
+        return "1h".equals(timeframe) || "4h".equals(timeframe);
     }
 
     public static class Breakout {
@@ -174,8 +231,96 @@ public class PatternProperties {
         }
     }
 
+    /** Same knobs as {@link Breakout}; independent tuning and detector version. */
+    public static class Breakdown {
+        private int lookbackCandles = 20;
+        private int volumeAvgPeriod = 20;
+        private String confirmationMode = "both";
+        private double volumeMultiplier = 1.5;
+        private double retestAtrMult = 0.25;
+        private double strengthenAtrMult = 1.0;
+        private double successRr = 2.0;
+        private double successAtrMultWithoutRetest = 2.0;
+        private String detectorVersion = "breakdown-v1";
+
+        public int getLookbackCandles() {
+            return lookbackCandles;
+        }
+
+        public void setLookbackCandles(int lookbackCandles) {
+            this.lookbackCandles = lookbackCandles;
+        }
+
+        public int getVolumeAvgPeriod() {
+            return volumeAvgPeriod;
+        }
+
+        public void setVolumeAvgPeriod(int volumeAvgPeriod) {
+            this.volumeAvgPeriod = volumeAvgPeriod;
+        }
+
+        public String getConfirmationMode() {
+            return confirmationMode;
+        }
+
+        public void setConfirmationMode(String confirmationMode) {
+            this.confirmationMode = confirmationMode;
+        }
+
+        public double getVolumeMultiplier() {
+            return volumeMultiplier;
+        }
+
+        public void setVolumeMultiplier(double volumeMultiplier) {
+            this.volumeMultiplier = volumeMultiplier;
+        }
+
+        public double getRetestAtrMult() {
+            return retestAtrMult;
+        }
+
+        public void setRetestAtrMult(double retestAtrMult) {
+            this.retestAtrMult = retestAtrMult;
+        }
+
+        public double getStrengthenAtrMult() {
+            return strengthenAtrMult;
+        }
+
+        public void setStrengthenAtrMult(double strengthenAtrMult) {
+            this.strengthenAtrMult = strengthenAtrMult;
+        }
+
+        public double getSuccessRr() {
+            return successRr;
+        }
+
+        public void setSuccessRr(double successRr) {
+            this.successRr = successRr;
+        }
+
+        public double getSuccessAtrMultWithoutRetest() {
+            return successAtrMultWithoutRetest;
+        }
+
+        public void setSuccessAtrMultWithoutRetest(double successAtrMultWithoutRetest) {
+            this.successAtrMultWithoutRetest = successAtrMultWithoutRetest;
+        }
+
+        public String getDetectorVersion() {
+            return detectorVersion;
+        }
+
+        public void setDetectorVersion(String detectorVersion) {
+            this.detectorVersion = detectorVersion;
+        }
+    }
+
     public static class Expiry {
-        private List<String> sessionCloseTimeframes = List.of("1m", "5m", "15m", "1h");
+        /** Hard-expire open instances at NSE session close (not hydrated across restarts). */
+        private List<String> sessionCloseTimeframes = List.of("1m", "5m", "15m");
+        private int maxSessions1h = 5;
+        private int maxCandles1h = 60;
         private int maxSessions4h = 5;
         private int maxCandles4h = 60;
         private int maxCandles1d = 30;
@@ -187,11 +332,27 @@ public class PatternProperties {
         public void setSessionCloseTimeframes(List<String> sessionCloseTimeframes) {
             this.sessionCloseTimeframes = sessionCloseTimeframes != null && !sessionCloseTimeframes.isEmpty()
                     ? List.copyOf(sessionCloseTimeframes)
-                    : List.of("1m", "5m", "15m", "1h");
+                    : List.of("1m", "5m", "15m");
         }
 
         public Set<String> sessionCloseTimeframes() {
             return Set.copyOf(sessionCloseTimeframes);
+        }
+
+        public int getMaxSessions1h() {
+            return maxSessions1h;
+        }
+
+        public void setMaxSessions1h(int maxSessions1h) {
+            this.maxSessions1h = maxSessions1h;
+        }
+
+        public int getMaxCandles1h() {
+            return maxCandles1h;
+        }
+
+        public void setMaxCandles1h(int maxCandles1h) {
+            this.maxCandles1h = maxCandles1h;
         }
 
         public int getMaxSessions4h() {

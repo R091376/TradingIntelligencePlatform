@@ -53,6 +53,8 @@ avg_move_r, avg_mfe_r, avg_mae_r, avg_duration_candles
 
 API gate: return real stats only if `sample_size >= 20`; else `insufficient_history`.
 
+Statistics are keyed by `(symbol_id, pattern_type, timeframe)` — Breakout and Breakdown aggregate separately.
+
 ## When journal is off
 
 | Condition | Behavior |

@@ -4,7 +4,6 @@ import com.tip.config.PatternProperties;
 import com.tip.journal.PatternJournal;
 import com.tip.market.CandleEngine;
 import com.tip.market.model.Candle;
-import com.tip.patterns.breakout.BreakoutLifecycle;
 import com.tip.patterns.model.ActivePattern;
 import com.tip.patterns.model.PatternStageEvent;
 import com.tip.watchlist.WatchlistRepository;
@@ -64,14 +63,15 @@ public class PatternStartupReconciler {
         Set<String> sessionTfs = patternProperties.getExpiry().sessionCloseTimeframes();
         List<ActivePattern> sessionOpens = patternJournal.findOpenByTimeframes(sessionTfs);
         for (ActivePattern p : sessionOpens) {
-            List<PatternStageEvent> ev = BreakoutLifecycle.expire(
+            List<PatternStageEvent> ev = PatternLifecycleSupport.expire(
                     p, null, "startup_recovery", now, true);
             patternJournal.applyEvents(p, ev);
             patternEventPublisher.publish(p, ev);
         }
         log.info("Pattern startup: expired {} session-close open instance(s)", sessionOpens.size());
 
-        Set<String> multiDay = Set.of("4h", "1d");
+        // 1h / 4h / 1d: hydrate and resume (not mass-expired on restart)
+        Set<String> multiDay = Set.of("1h", "4h", "1d");
         List<ActivePattern> multi = patternJournal.findOpenByTimeframes(multiDay);
         int hydrated = 0;
         int dropped = 0;
@@ -81,7 +81,7 @@ public class PatternStartupReconciler {
             List<Candle> closed = candleEngine.getClosedCandles(p.symbolId(), p.timeframe());
             if (!onWatchlist || closed.isEmpty()) {
                 String reason = onWatchlist ? "startup_recovery" : "symbol_removed";
-                List<PatternStageEvent> ev = BreakoutLifecycle.expire(p, null, reason, now, true);
+                List<PatternStageEvent> ev = PatternLifecycleSupport.expire(p, null, reason, now, true);
                 patternJournal.applyEvents(p, ev);
                 patternEventPublisher.publish(p, ev);
                 dropped++;

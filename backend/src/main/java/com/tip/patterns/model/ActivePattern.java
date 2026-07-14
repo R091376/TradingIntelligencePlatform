@@ -297,16 +297,29 @@ public final class ActivePattern {
         }
     }
 
+    /**
+     * Max favorable excursion in R. Extremes: {@code mfePrice}=max high, {@code maePrice}=min low.
+     * LONG: up from entry; SHORT: down from entry.
+     */
     public double maxFavorableR() {
         if (atrAtDetect <= 0) {
             return 0;
         }
+        if (direction == PatternDirection.SHORT) {
+            return (entryPrice - maePrice) / atrAtDetect;
+        }
         return (mfePrice - entryPrice) / atrAtDetect;
     }
 
+    /**
+     * Max adverse excursion in R. LONG: down from entry; SHORT: up from entry.
+     */
     public double maxAdverseR() {
         if (atrAtDetect <= 0) {
             return 0;
+        }
+        if (direction == PatternDirection.SHORT) {
+            return (mfePrice - entryPrice) / atrAtDetect;
         }
         return (entryPrice - maePrice) / atrAtDetect;
     }
@@ -314,6 +327,9 @@ public final class ActivePattern {
     public Double moveR() {
         if (endPrice == null || atrAtDetect <= 0) {
             return null;
+        }
+        if (direction == PatternDirection.SHORT) {
+            return (entryPrice - endPrice) / atrAtDetect;
         }
         return (endPrice - entryPrice) / atrAtDetect;
     }

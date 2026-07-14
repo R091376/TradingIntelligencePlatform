@@ -8,9 +8,12 @@ import com.tip.market.model.Candle;
 import com.tip.patterns.breakout.BreakoutBarEvaluation;
 import com.tip.patterns.breakout.BreakoutBarEvaluator;
 import com.tip.patterns.breakout.BreakoutConfig;
-import com.tip.patterns.breakout.BreakoutLifecycle;
+import com.tip.patterns.breakdown.BreakdownBarEvaluation;
+import com.tip.patterns.breakdown.BreakdownBarEvaluator;
+import com.tip.patterns.breakdown.BreakdownConfig;
 import com.tip.patterns.model.ActivePattern;
 import com.tip.patterns.model.PatternStageEvent;
+import com.tip.patterns.model.PatternType;
 import com.tip.watchlist.WatchlistEntry;
 import com.tip.watchlist.WatchlistRepository;
 import org.slf4j.Logger;
@@ -25,7 +28,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Listens for closed candles and runs Breakout detect/lifecycle + journal.
+ * Listens for closed candles and runs Breakout / Breakdown detect/lifecycle + journal.
  */
 @Component
 public class PatternEvaluator {
@@ -84,36 +87,46 @@ public class PatternEvaluator {
                     .map(s -> s != null && s.toUpperCase().contains("INDEX"))
                     .orElse(symbolId != null && symbolId.startsWith("NSE_INDEX"));
 
-            BreakoutConfig config = patternProperties.toBreakoutConfig();
+            BreakoutConfig breakoutConfig = patternProperties.toBreakoutConfig();
+            BreakdownConfig breakdownConfig = patternProperties.toBreakdownConfig();
             Instant now = Instant.now();
 
             List<ActivePattern> open = new ArrayList<>(activeInstanceStore.getOpen(symbolId, timeframe));
-            BreakoutBarEvaluation eval = BreakoutBarEvaluator.evaluate(
-                    symbolId, timeframe, open, closed, index, config, now
+            List<ActivePattern> openBreakouts = open.stream()
+                    .filter(p -> p.patternType() == PatternType.BREAKOUT)
+                    .toList();
+            List<ActivePattern> openBreakdowns = open.stream()
+                    .filter(p -> p.patternType() == PatternType.BREAKDOWN)
+                    .toList();
+            // Preserve any future pattern types not yet advanced this bar
+            List<ActivePattern> otherOpen = open.stream()
+                    .filter(p -> p.patternType() != PatternType.BREAKOUT
+                            && p.patternType() != PatternType.BREAKDOWN)
+                    .toList();
+
+            BreakoutBarEvaluation breakoutEval = BreakoutBarEvaluator.evaluate(
+                    symbolId, timeframe, new ArrayList<>(openBreakouts), closed, index, breakoutConfig, now
+            );
+            BreakdownBarEvaluation breakdownEval = BreakdownBarEvaluator.evaluate(
+                    symbolId, timeframe, new ArrayList<>(openBreakdowns), closed, index, breakdownConfig, now
             );
 
-            // Persist + publish (single journal TX per instance via persistLifecycle)
-            for (ActivePattern advanced : eval.advanced()) {
-                List<PatternStageEvent> stageEvents = eval.events().stream()
-                        .filter(e -> e.instanceId().equals(advanced.id()))
-                        .toList();
-                if (!stageEvents.isEmpty() || advanced.isTerminal()) {
-                    patternJournal.persistLifecycle(advanced, stageEvents);
-                    patternEventPublisher.publish(advanced, stageEvents);
-                }
-            }
+            persistEval(
+                    breakoutEval.advanced(),
+                    breakoutEval.newlyDetected(),
+                    breakoutEval.events()
+            );
+            persistEval(
+                    breakdownEval.advanced(),
+                    breakdownEval.newlyDetected(),
+                    breakdownEval.events()
+            );
 
-            for (ActivePattern detected : eval.newlyDetected()) {
-                List<PatternStageEvent> all = eval.events().stream()
-                        .filter(e -> e.instanceId().equals(detected.id()))
-                        .toList();
-                patternJournal.persistLifecycle(detected, all);
-                patternEventPublisher.publish(detected, all);
-            }
-
-            // Policy expiry for multi-day max candles / sessions on this bar
-            List<ActivePattern> still = new ArrayList<>(eval.stillOpen());
-            still = applyDurationPolicies(still, signal, timeframe, config, now);
+            List<ActivePattern> still = new ArrayList<>();
+            still.addAll(breakoutEval.stillOpen());
+            still.addAll(breakdownEval.stillOpen());
+            still.addAll(otherOpen);
+            still = applyDurationPolicies(still, signal, timeframe, now);
 
             activeInstanceStore.replaceOpen(symbolId, timeframe, still);
         } catch (RuntimeException ex) {
@@ -121,32 +134,53 @@ public class PatternEvaluator {
         }
     }
 
+    private void persistEval(
+            List<ActivePattern> advanced,
+            List<ActivePattern> newlyDetected,
+            List<PatternStageEvent> allEvents
+    ) {
+        for (ActivePattern adv : advanced) {
+            List<PatternStageEvent> stageEvents = allEvents.stream()
+                    .filter(e -> e.instanceId().equals(adv.id()))
+                    .toList();
+            if (!stageEvents.isEmpty() || adv.isTerminal()) {
+                patternJournal.persistLifecycle(adv, stageEvents);
+                patternEventPublisher.publish(adv, stageEvents);
+            }
+        }
+        for (ActivePattern detected : newlyDetected) {
+            List<PatternStageEvent> all = allEvents.stream()
+                    .filter(e -> e.instanceId().equals(detected.id()))
+                    .toList();
+            patternJournal.persistLifecycle(detected, all);
+            patternEventPublisher.publish(detected, all);
+        }
+    }
+
     private List<ActivePattern> applyDurationPolicies(
             List<ActivePattern> open,
             Candle signal,
             String timeframe,
-            BreakoutConfig config,
             Instant now
     ) {
         List<ActivePattern> kept = new ArrayList<>();
         for (ActivePattern p : open) {
             boolean expire = false;
             String reason = null;
-            if ("4h".equals(timeframe)) {
-                if (p.durationCandles() >= patternProperties.getExpiry().getMaxCandles4h()) {
+            if (patternProperties.isMultiDayTimeframe(timeframe)) {
+                int maxCandles = patternProperties.maxCandlesFor(timeframe);
+                int maxSessions = patternProperties.maxSessionsFor(timeframe);
+                if (p.durationCandles() >= maxCandles) {
                     expire = true;
                     reason = "max_candles";
-                } else if (p.sessionsSeen() >= patternProperties.getExpiry().getMaxSessions4h()) {
+                } else if (patternProperties.tracksSessionsOnClose(timeframe)
+                        && p.sessionsSeen() >= maxSessions) {
                     expire = true;
                     reason = "max_sessions";
                 }
-            } else if ("1d".equals(timeframe)
-                    && p.durationCandles() >= patternProperties.getExpiry().getMaxCandles1d()) {
-                expire = true;
-                reason = "max_candles";
             }
             if (expire) {
-                List<PatternStageEvent> ev = BreakoutLifecycle.expire(p, signal, reason, now, false);
+                List<PatternStageEvent> ev = PatternLifecycleSupport.expire(p, signal, reason, now, false);
                 patternJournal.applyEvents(p, ev);
                 patternEventPublisher.publish(p, ev);
             } else {

@@ -24,7 +24,7 @@ This MVP implements **Breakout only**, on **live-forward** closed bars (no histo
 1. `CandleClosedEvent` must be published **outside** the `CandleEngine` per-series lock; pattern evaluation must never hold that lock or run DB/WS work under it.
 2. Session-close expiry applies only to **intraday** timeframes; higher TFs use max-session / max-candle policies.
 3. Instance `status` = terminal if closed, else **highest enrichment ordinal** (flags); never demote STRENGTHENED → RETESTED.
-4. **Startup (PI-15):** expire only session_close TF opens; **hydrate** open `4h`/`1d` and resume (MFE/MAE recompute from closed candles).
+4. **Startup (PI-15):** expire only session_close TF opens (`1m`/`5m`/`15m`); **hydrate** open `1h`/`4h`/`1d` and resume (MFE/MAE recompute from closed candles).
 5. **`@EnableScheduling`** required for phase clock (PR0 `SchedulingConfig`).
 
 ---
@@ -113,7 +113,7 @@ Architecture §8 status table is partially stale (watchlist, multi-TF, Postgres 
 | **PI-12** | Volume unusable (INDEX segment **or** avg volume ≤ 0 **or** breakout volume ≤ 0) → confirmation **close-only** even if config is `both` | Auto-fallback for Nifty index / zero VTT |
 | **PI-13** | WS stages configurable via `tip.pattern.ws.broadcast-stages` (default **all** stages including Retested/Strengthened/Expired); journal always records all stages | Locked “all stages” product default; still allows Plan-style subset without code change |
 | **PI-14** | `symbol_id` = Upstox `instrument_key` (watchlist PK) | Soft-delete joins (KD27); consistent APIs |
-| **PI-15** | **TF-scoped startup recovery:** expire open instances only for **session_close** TFs (`1m,5m,15m,1h`) with `reason=startup_recovery`. For **`4h`/`1d`**, **hydrate** open rows into `ActiveInstanceStore` and resume lifecycle — do **not** mass-expire multi-day opens on restart | Makes PI-19 multi-day policies survive deploys/crashes; intraday still clean-slate |
+| **PI-15** | **TF-scoped startup recovery:** expire open instances only for **session_close** TFs (`1m,5m,15m`) with `reason=startup_recovery`. For **`1h`/`4h`/`1d`**, **hydrate** open rows into `ActiveInstanceStore` and resume lifecycle — do **not** mass-expire multi-day opens on restart | Makes PI-19 multi-day policies survive deploys/crashes; short intraday still clean-slate |
 | **PI-16** | Confirmation modes: `close` \| `volume` \| `both` (default `both`) | Matches Pattern-Definitions |
 | **PI-17** | Virtual entry = **Detected candle close**; stop = **reference_level**; target from PI-7 | Read-only virtual trade (AD0) |
 | **PI-18** | `detector_version` string on instance | Threshold changes remain journal-comparable |
@@ -132,8 +132,9 @@ Architecture §8 status table is partially stale (watchlist, multi-TF, Postgres 
 
 | Timeframe | Expiry mode | Rule |
 |---|---|---|
-| `1m`, `5m`, `15m`, `1h` | **session_close** | On transition to `MarketPhase.CLOSED` (from OPEN or PRE_OPEN), expire all open instances for these TFs with `reason=session_end` |
-| `4h` | **max_sessions** | Do **not** session-expire daily. Expire when instance age ≥ **5** NSE sessions (calendar trading days with a CLOSE event observed since `detected_at`), or when `duration_candles ≥ tip.pattern.expiry.max-candles-4h` (default **60**) — whichever first |
+| `1m`, `5m`, `15m` | **session_close** | On transition to `MarketPhase.CLOSED`, expire all open instances for these TFs with `reason=session_end` |
+| `1h` | **max_sessions + max_candles** (same style as 4h) | Do **not** session-expire daily. Expire when `sessions_seen ≥ max-sessions-1h` (default **5**) or `duration_candles ≥ max-candles-1h` (default **60**) — whichever first. Hydrate on restart |
+| `4h` | **max_sessions + max_candles** | Do **not** session-expire daily. Expire when `sessions_seen ≥ max-sessions-4h` (default **5**) or `duration_candles ≥ max-candles-4h` (default **60**) — whichever first |
 | `1d` | **max_candles only** | **Never** session-expire on daily market close. Expire when `duration_candles ≥ tip.pattern.expiry.max-candles-1d` (default **30** daily bars) without terminal price outcome |
 
 Config keys under `tip.pattern.expiry.*` (see Config section).
@@ -142,8 +143,8 @@ Config keys under `tip.pattern.expiry.*` (see Config section).
 
 | Timeframe class | On `ApplicationReady` / pattern engine start |
 |---|---|
-| **session_close** (`1m`, `5m`, `15m`, `1h`) | Load open rows → terminal **EXPIRED** `reason=startup_recovery`, excursion fields **NULL** → do **not** put in `ActiveInstanceStore` |
-| **multi-day** (`4h`, `1d`) | **Hydrate** each open row into `ActiveInstanceStore`; **do not** expire; resume on subsequent `CandleClosedEvent`s |
+| **session_close** (`1m`, `5m`, `15m`) | Load open rows → terminal **EXPIRED** `reason=startup_recovery`, excursion fields **NULL** → do **not** put in `ActiveInstanceStore` |
+| **multi-day** (`1h`, `4h`, `1d`) | **Hydrate** each open row into `ActiveInstanceStore`; **do not** expire; resume on subsequent `CandleClosedEvent`s |
 
 **Hydrate field set** (from `pattern_instances` row → `ActivePattern`):
 
@@ -1123,7 +1124,9 @@ tip:
       success-atr-mult-without-retest: 2.0
     expiry:
       # Clock interval is tip.market.phase-refresh-ms (not duplicated here as binding source)
-      session-close-timeframes: [1m, 5m, 15m, 1h]
+      session-close-timeframes: [1m, 5m, 15m]
+      max-sessions-1h: 5
+      max-candles-1h: 60
       max-sessions-4h: 5
       max-candles-4h: 60
       max-candles-1d: 30

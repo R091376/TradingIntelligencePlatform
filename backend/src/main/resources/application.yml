@@ -56,8 +56,22 @@ tip:
       success-rr: 2.0
       success-atr-mult-without-retest: 2.0
       detector-version: breakout-v1
+    breakdown:
+      lookback-candles: 20
+      volume-avg-period: 20
+      confirmation-mode: both
+      volume-multiplier: 1.5
+      retest-atr-mult: 0.25
+      strengthen-atr-mult: 1.0
+      success-rr: 2.0
+      success-atr-mult-without-retest: 2.0
+      detector-version: breakdown-v1
     expiry:
-      session-close-timeframes: [1m, 5m, 15m, 1h]
+      # Hard-expire open instances at 15:30 (and on restart as startup_recovery)
+      session-close-timeframes: [1m, 5m, 15m]
+      # 1h / 4h / 1d survive overnight + restart (hydrate); expire by age instead
+      max-sessions-1h: 5
+      max-candles-1h: 60
       max-sessions-4h: 5
       max-candles-4h: 60
       max-candles-1d: 30

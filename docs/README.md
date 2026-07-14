@@ -20,7 +20,7 @@ Authoritative math and lifecycle docs for indicators, patterns, and the pattern 
 ```
 market (closed candles)
   → indicators (ATR, Donchian, …)
-  → patterns (Breakout lifecycle, …)
+  → patterns (Breakout / Breakdown lifecycle, …)
   → journal (Postgres)
   → REST / WebSocket
 ```

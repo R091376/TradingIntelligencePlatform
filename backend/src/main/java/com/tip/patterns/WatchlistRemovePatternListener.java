@@ -1,7 +1,6 @@
 package com.tip.patterns;
 
 import com.tip.journal.PatternJournal;
-import com.tip.patterns.breakout.BreakoutLifecycle;
 import com.tip.patterns.model.ActivePattern;
 import com.tip.patterns.model.PatternStageEvent;
 import com.tip.watchlist.event.WatchlistSymbolRemovedEvent;
@@ -69,7 +68,7 @@ public class WatchlistRemovePatternListener {
         for (ActivePattern p : byId.values()) {
             boolean memory = Boolean.TRUE.equals(fromMemory.get(p.id()));
             // Memory path keeps MFE/MAE; journal-only has entry-seeded mfe/mae → NULL excursions
-            List<PatternStageEvent> ev = BreakoutLifecycle.expire(
+            List<PatternStageEvent> ev = PatternLifecycleSupport.expire(
                     p, null, "symbol_removed", now, !memory);
             patternJournal.applyEvents(p, ev);
             patternEventPublisher.publish(p, ev);

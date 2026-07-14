@@ -1,23 +1,25 @@
-package com.tip.patterns.breakout;
+package com.tip.patterns.breakdown;
 
 import com.tip.market.model.Candle;
+import com.tip.patterns.PatternLifecycleSupport;
 import com.tip.patterns.model.ActivePattern;
 import com.tip.patterns.model.ConfirmationMode;
 import com.tip.patterns.model.FinalOutcome;
 import com.tip.patterns.model.PatternStage;
 import com.tip.patterns.model.PatternStageEvent;
+import com.tip.patterns.model.PatternType;
 
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Advances an open Breakout instance on one closed candle.
- * Math/stages: {@code docs/patterns/breakout.md}
+ * Advances an open Breakdown instance on one closed candle.
+ * Math/stages: {@code docs/patterns/breakdown.md}
  */
-public final class BreakoutLifecycle {
+public final class BreakdownLifecycle {
 
-    private BreakoutLifecycle() {
+    private BreakdownLifecycle() {
     }
 
     /**
@@ -27,36 +29,36 @@ public final class BreakoutLifecycle {
     public static List<PatternStageEvent> onCandle(
             ActivePattern instance,
             Candle candle,
-            BreakoutConfig config,
+            BreakdownConfig config,
             Instant now
     ) {
         if (instance.isTerminal()) {
             return List.of();
         }
-        if (instance.patternType() != com.tip.patterns.model.PatternType.BREAKOUT) {
-            throw new IllegalArgumentException("BreakoutLifecycle only handles BREAKOUT");
+        if (instance.patternType() != PatternType.BREAKDOWN) {
+            throw new IllegalArgumentException("BreakdownLifecycle only handles BREAKDOWN");
         }
 
         List<PatternStageEvent> events = new ArrayList<>(4);
         double atr = instance.atrAtDetect();
         double ref = instance.referenceLevel();
 
-        // 1) MFE / MAE
+        // 1) MFE / MAE extremes (max high / min low — R formulas are direction-aware)
         instance.setMfePrice(Math.max(instance.mfePrice(), candle.high()));
         instance.setMaePrice(Math.min(instance.maePrice(), candle.low()));
         if (candle.time() != instance.detectCandleTime()) {
             instance.setDurationCandles(instance.durationCandles() + 1);
         }
 
-        // 2) Failed first (PI-21)
-        if (candle.close() < ref) {
+        // 2) Failed first (PI-21) — close back above reference
+        if (candle.close() > ref) {
             instance.markTerminal(FinalOutcome.FAILED, PatternStage.FAILED, "invalidation", candle.close());
             events.add(event(instance, PatternStage.FAILED, candle, now));
             return events;
         }
 
         // 3) Succeeded — allowed from DETECTED without Confirmed (PI-7)
-        if (candle.high() >= instance.targetLevel()) {
+        if (candle.low() <= instance.targetLevel()) {
             instance.markTerminal(FinalOutcome.SUCCEEDED, PatternStage.SUCCEEDED, "price_target", candle.close());
             events.add(event(instance, PatternStage.SUCCEEDED, candle, now));
             return events;
@@ -69,15 +71,15 @@ public final class BreakoutLifecycle {
             events.add(event(instance, PatternStage.CONFIRMED, candle, now));
         }
 
-        // 5) Retested (once; may run after strengthen for flag only — status never demotes)
+        // 5) Retested (once). retestFloor stores retest extreme (ceiling for short)
         if (instance.flagConfirmed() && !instance.flagRetested()) {
-            double retestBand = ref + config.retestAtrMult() * atr;
-            if (candle.low() <= retestBand && candle.close() >= ref) {
+            double retestBand = ref - config.retestAtrMult() * atr;
+            if (candle.high() >= retestBand && candle.close() <= ref) {
                 instance.setFlagRetested(true);
-                instance.setRetestFloor(candle.low());
-                if (candle.low() < ref) {
-                    double risk = ref - candle.low();
-                    instance.setTargetLevel(ref + config.successRr() * risk);
+                instance.setRetestFloor(candle.high());
+                if (candle.high() > ref) {
+                    double risk = candle.high() - ref;
+                    instance.setTargetLevel(ref - config.successRr() * risk);
                 }
                 events.add(event(instance, PatternStage.RETESTED, candle, now));
             }
@@ -85,7 +87,7 @@ public final class BreakoutLifecycle {
 
         // 6) Strengthened (once; independent of retested)
         if (instance.flagConfirmed() && !instance.flagStrengthened()) {
-            if (candle.high() >= ref + config.strengthenAtrMult() * atr) {
+            if (candle.low() <= ref - config.strengthenAtrMult() * atr) {
                 instance.setFlagStrengthened(true);
                 events.add(event(instance, PatternStage.STRENGTHENED, candle, now));
             }
@@ -96,8 +98,7 @@ public final class BreakoutLifecycle {
     }
 
     /**
-     * Force expire (session / startup / remove). Caller supplies reason code.
-     * Delegates to {@link com.tip.patterns.PatternLifecycleSupport#expire} (type-agnostic).
+     * Force expire — delegates to shared support (type-agnostic).
      */
     public static List<PatternStageEvent> expire(
             ActivePattern instance,
@@ -106,14 +107,13 @@ public final class BreakoutLifecycle {
             Instant now,
             boolean nullExcursions
     ) {
-        return com.tip.patterns.PatternLifecycleSupport.expire(
-                instance, lastCandleOrNull, reason, now, nullExcursions);
+        return PatternLifecycleSupport.expire(instance, lastCandleOrNull, reason, now, nullExcursions);
     }
 
     static boolean canConfirm(ActivePattern instance, Candle candle) {
         ConfirmationMode mode = instance.confirmationModeUsed();
-        boolean stillAbove = candle.close() > instance.referenceLevel();
-        if (!stillAbove) {
+        boolean stillBelow = candle.close() < instance.referenceLevel();
+        if (!stillBelow) {
             return false;
         }
         boolean detectBar = candle.time() == instance.detectCandleTime();
@@ -130,9 +130,6 @@ public final class BreakoutLifecycle {
             Candle candle,
             Instant now
     ) {
-        double price = stage == PatternStage.FAILED || stage == PatternStage.SUCCEEDED
-                ? candle.close()
-                : candle.close();
-        return new PatternStageEvent(instance.id(), stage, candle.time(), price, now);
+        return new PatternStageEvent(instance.id(), stage, candle.time(), candle.close(), now);
     }
 }

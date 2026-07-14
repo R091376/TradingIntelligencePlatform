@@ -6,7 +6,6 @@ import com.tip.market.CandleEngine;
 import com.tip.market.MarketPhase;
 import com.tip.market.event.MarketPhaseChangedEvent;
 import com.tip.market.model.Candle;
-import com.tip.patterns.breakout.BreakoutLifecycle;
 import com.tip.patterns.model.ActivePattern;
 import com.tip.patterns.model.PatternStageEvent;
 import org.slf4j.Logger;
@@ -18,7 +17,7 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * Session-close expiry for intraday TFs; increments 4h session counters.
+ * Session-close expiry for short intraday TFs; session counters for 1h/4h multi-day setups.
  */
 @Component
 public class SessionExpiryReconciler {
@@ -62,17 +61,17 @@ public class SessionExpiryReconciler {
         for (ActivePattern p : all) {
             if (patternProperties.isSessionCloseTimeframe(p.timeframe())) {
                 Candle last = lastClosed(p);
-                List<PatternStageEvent> ev = BreakoutLifecycle.expire(p, last, "session_end", now, false);
+                List<PatternStageEvent> ev = PatternLifecycleSupport.expire(p, last, "session_end", now, false);
                 patternJournal.applyEvents(p, ev);
                 patternEventPublisher.publish(p, ev);
                 activeInstanceStore.remove(p);
                 expired++;
-            } else if ("4h".equals(p.timeframe())) {
+            } else if (patternProperties.tracksSessionsOnClose(p.timeframe())) {
                 p.setSessionsSeen(p.sessionsSeen() + 1);
                 patternJournal.applyEvents(p, List.of());
-                if (p.sessionsSeen() >= patternProperties.getExpiry().getMaxSessions4h()) {
+                if (p.sessionsSeen() >= patternProperties.maxSessionsFor(p.timeframe())) {
                     Candle last = lastClosed(p);
-                    List<PatternStageEvent> ev = BreakoutLifecycle.expire(p, last, "max_sessions", now, false);
+                    List<PatternStageEvent> ev = PatternLifecycleSupport.expire(p, last, "max_sessions", now, false);
                     patternJournal.applyEvents(p, ev);
                     patternEventPublisher.publish(p, ev);
                     activeInstanceStore.remove(p);

@@ -92,9 +92,10 @@ Evaluation is **closed-candle only** (non-repainting).
 
 | TF | Rule |
 |---|---|
-| `1m`,`5m`,`15m`,`1h` | Session close (`MarketPhase.CLOSED`) or startup recovery for these TFs |
-| `4h` | 5 sessions or 60 bars (config) |
-| `1d` | 30 daily bars; never session-expire |
+| `1m`,`5m`,`15m` | Session close (`MarketPhase.CLOSED`) or startup recovery for these TFs |
+| `1h` | Like 4h: **not** daily session-expire; hydrate on restart; expire after **5 sessions** or **60 bars** (config) |
+| `4h` | 5 sessions or 60 bars (config); hydrate on restart |
+| `1d` | 30 daily bars; never session-expire; hydrate on restart |
 
 ## Display status (PI-22)
 
