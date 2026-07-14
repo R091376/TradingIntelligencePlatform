@@ -130,9 +130,6 @@ public final class BreakoutLifecycle {
             Candle candle,
             Instant now
     ) {
-        double price = stage == PatternStage.FAILED || stage == PatternStage.SUCCEEDED
-                ? candle.close()
-                : candle.close();
-        return new PatternStageEvent(instance.id(), stage, candle.time(), price, now);
+        return new PatternStageEvent(instance.id(), stage, candle.time(), candle.close(), now);
     }
 }

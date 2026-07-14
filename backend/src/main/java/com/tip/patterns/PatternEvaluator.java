@@ -24,8 +24,6 @@ import org.springframework.stereotype.Component;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Listens for closed candles and runs Breakout / Breakdown detect/lifecycle + journal.
@@ -42,7 +40,7 @@ public class PatternEvaluator {
     private final ActiveInstanceStore activeInstanceStore;
     private final PatternJournal patternJournal;
     private final PatternEventPublisher patternEventPublisher;
-    private final Map<String, Object> seriesLocks = new ConcurrentHashMap<>();
+    private final PatternSeriesGate seriesGate;
 
     public PatternEvaluator(
             PatternFeatureGuard featureGuard,
@@ -51,7 +49,8 @@ public class PatternEvaluator {
             WatchlistRepository watchlistRepository,
             ActiveInstanceStore activeInstanceStore,
             PatternJournal patternJournal,
-            PatternEventPublisher patternEventPublisher
+            PatternEventPublisher patternEventPublisher,
+            PatternSeriesGate seriesGate
     ) {
         this.featureGuard = featureGuard;
         this.patternProperties = patternProperties;
@@ -60,6 +59,7 @@ public class PatternEvaluator {
         this.activeInstanceStore = activeInstanceStore;
         this.patternJournal = patternJournal;
         this.patternEventPublisher = patternEventPublisher;
+        this.seriesGate = seriesGate;
     }
 
     @EventListener
@@ -69,10 +69,7 @@ public class PatternEvaluator {
         }
         String symbolId = event.instrumentKey();
         String timeframe = event.timeframe();
-        Object lock = seriesLocks.computeIfAbsent(symbolId + "|" + timeframe, k -> new Object());
-        synchronized (lock) {
-            evaluateUnlocked(symbolId, timeframe, event.candle());
-        }
+        seriesGate.run(symbolId, timeframe, () -> evaluateUnlocked(symbolId, timeframe, event.candle()));
     }
 
     private void evaluateUnlocked(String symbolId, String timeframe, Candle signal) {
@@ -98,7 +95,6 @@ public class PatternEvaluator {
             List<ActivePattern> openBreakdowns = open.stream()
                     .filter(p -> p.patternType() == PatternType.BREAKDOWN)
                     .toList();
-            // Preserve any future pattern types not yet advanced this bar
             List<ActivePattern> otherOpen = open.stream()
                     .filter(p -> p.patternType() != PatternType.BREAKOUT
                             && p.patternType() != PatternType.BREAKDOWN)

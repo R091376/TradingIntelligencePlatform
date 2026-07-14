@@ -241,8 +241,9 @@ public class PostgresPatternJournal implements PatternJournal {
         } else {
             o.setMaxFavorableR(p.maxFavorableR());
             o.setMaxAdverseR(p.maxAdverseR());
-            o.setMaxFavorablePrice(p.mfePrice());
-            o.setMaxAdversePrice(p.maePrice());
+            // Direction-aware absolute extremes (SHORT favorable = min low, adverse = max high)
+            o.setMaxFavorablePrice(p.favorableExtremePrice());
+            o.setMaxAdversePrice(p.adverseExtremePrice());
             o.setMoveR(p.moveR());
             o.setEndPrice(p.endPrice());
         }

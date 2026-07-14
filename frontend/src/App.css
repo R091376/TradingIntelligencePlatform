@@ -44,12 +44,57 @@
   justify-content: flex-end;
 }
 
-/* Main row: chart + right watchlist */
+/* Main row: TF rail | chart | alerts + watchlist */
 .chart-body {
   display: flex;
   flex: 1;
   min-height: 0;
   align-items: stretch;
+}
+
+/* Left vertical timeframes */
+.tf-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  width: 56px;
+  flex-shrink: 0;
+  padding: 12px 8px;
+  border-right: 1px solid #1e2433;
+  background: #0c0e14;
+  min-height: 0;
+}
+
+.tf-rail__label {
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+  text-align: center;
+}
+
+/* Right column: alerts on top, watchlist below */
+.right-rail {
+  display: flex;
+  flex-direction: column;
+  width: 280px;
+  min-width: 240px;
+  max-width: 320px;
+  flex-shrink: 0;
+  min-height: 0;
+  border-left: 1px solid #1e2433;
+  background: #0c0e14;
+}
+
+.right-rail .watchlist-sidebar {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  flex: 1 1 45%;
+  border-left: none;
+  min-height: 0;
 }
 
 .badge-ready {
@@ -89,6 +134,212 @@
   background: #0c0e14;
   min-height: 0;
   /* Do not set overflow-x:hidden — it forces overflow-y:auto and clips the dropdown */
+}
+
+/* ── Alerts feed (right rail) ────────────────────────────────────────── */
+
+.alerts-feed {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 55%;
+  min-height: 140px;
+  max-height: 55%;
+  border-bottom: 1px solid #1e2433;
+  min-width: 0;
+}
+
+.alerts-feed__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 14px 8px;
+  flex-shrink: 0;
+}
+
+.alerts-feed__title {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.alerts-feed__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.alerts-feed__count {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
+}
+
+.alerts-feed__clear {
+  border: 1px solid #2a3144;
+  background: transparent;
+  color: #94a3b8;
+  font: inherit;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.alerts-feed__clear:hover {
+  color: #e2e8f0;
+  border-color: #3b445c;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.alerts-feed__empty {
+  margin: 0;
+  padding: 10px 14px 16px;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: #64748b;
+}
+
+.alerts-feed__list {
+  list-style: none;
+  margin: 0;
+  padding: 0 6px 10px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.alerts-feed__row {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #e2e8f0;
+  font: inherit;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.alerts-feed__row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.alerts-feed__row--active {
+  background: rgba(167, 139, 250, 0.1);
+  border-color: rgba(167, 139, 250, 0.35);
+}
+
+.alerts-feed__row--focus {
+  background: rgba(167, 139, 250, 0.16);
+  border-color: rgba(167, 139, 250, 0.55);
+  box-shadow: inset 2px 0 0 #a78bfa;
+}
+
+.alerts-feed__row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.alerts-feed__stage {
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+
+.alerts-feed__stage--info {
+  background: rgba(56, 189, 248, 0.15);
+  color: #7dd3fc;
+}
+
+.alerts-feed__stage--warn {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+}
+
+.alerts-feed__stage--success {
+  background: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+}
+
+.alerts-feed__stage--danger {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+}
+
+.alerts-feed__stage--muted {
+  background: rgba(100, 116, 139, 0.15);
+  color: #94a3b8;
+}
+
+.alerts-feed__tf {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
+}
+
+.alerts-feed__row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.alerts-feed__symbol {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #f1f5f9;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.alerts-feed__pattern {
+  font-size: 0.6875rem;
+  color: #94a3b8;
+  text-transform: capitalize;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.alerts-feed__row-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.6875rem;
+  color: #64748b;
+}
+
+.alerts-feed__price {
+  font-variant-numeric: tabular-nums;
+  color: #cbd5e1;
+  font-weight: 500;
+}
+
+.alerts-feed__time {
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .watchlist-sidebar__header {
@@ -497,6 +748,23 @@
 .timeframe-selector button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.timeframe-selector--vertical {
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  padding: 4px;
+  gap: 2px;
+  width: 100%;
+}
+
+.timeframe-selector--vertical button {
+  min-width: 0;
+  width: 100%;
+  padding: 8px 4px;
+  font-size: 0.75rem;
 }
 
 /* ── Chart type toggle ───────────────────────────────────────────────── */

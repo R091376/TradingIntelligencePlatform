@@ -298,6 +298,23 @@ public final class ActivePattern {
     }
 
     /**
+     * Absolute price extreme that is favorable for this direction.
+     * Extremes tracked: {@code mfePrice}=max high, {@code maePrice}=min low.
+     * LONG: max high; SHORT: min low.
+     */
+    public double favorableExtremePrice() {
+        return direction == PatternDirection.SHORT ? maePrice : mfePrice;
+    }
+
+    /**
+     * Absolute price extreme that is adverse for this direction.
+     * LONG: min low; SHORT: max high.
+     */
+    public double adverseExtremePrice() {
+        return direction == PatternDirection.SHORT ? mfePrice : maePrice;
+    }
+
+    /**
      * Max favorable excursion in R. Extremes: {@code mfePrice}=max high, {@code maePrice}=min low.
      * LONG: up from entry; SHORT: down from entry.
      */

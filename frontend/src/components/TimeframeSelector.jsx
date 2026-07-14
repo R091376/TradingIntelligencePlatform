@@ -1,10 +1,22 @@
-export default function TimeframeSelector({ timeframes, value, onChange, disabled }) {
+export default function TimeframeSelector({
+  timeframes,
+  value,
+  onChange,
+  disabled,
+  orientation = 'horizontal',
+}) {
   if (!timeframes?.length) {
     return null
   }
 
+  const vertical = orientation === 'vertical'
+
   return (
-    <div className="timeframe-selector" role="group" aria-label="Timeframe">
+    <div
+      className={`timeframe-selector${vertical ? ' timeframe-selector--vertical' : ''}`}
+      role="group"
+      aria-label="Timeframe"
+    >
       {timeframes.map((tf) => (
         <button
           key={tf}

@@ -1,10 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  CandlestickSeries,
-  ColorType,
-  createChart,
-  LineSeries,
-} from 'lightweight-charts'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createChart } from 'lightweight-charts'
 import {
   DEFAULT_TIMEFRAME,
   DEFAULT_TIMEFRAMES,
@@ -14,53 +9,32 @@ import {
 } from '../services/marketApi'
 import { addSymbol, fetchWatchlist, removeSymbol } from '../services/watchlistApi'
 import { createLiveSocket } from '../services/liveSocket'
-import { utcToNseChartTime } from '../utils/chartTime'
+import {
+  BAR_SPACING,
+  buildSymbolLabels,
+  createPriceSeries,
+  defaultChartOptions,
+  entryFailedMessage,
+  mapSeriesData,
+  MARKET_CLOSED_MSG,
+  normalizeStatus,
+  resolveDisplayStatus,
+  sortedCandlesFromMap,
+  toCandlestickPoint,
+  toLinePoint,
+} from '../chart/helpers'
+import { usePatternOverlay } from '../chart/usePatternOverlay'
+import { seriesKey } from '../utils/patternOverlay'
+import AlertsFeed from './AlertsFeed'
 import ChartTypeToggle from './ChartTypeToggle'
 import ConnectionStatus from './ConnectionStatus'
 import SymbolSwitcher from './SymbolSwitcher'
 import TimeframeSelector from './TimeframeSelector'
 
-function toCandlestickPoint(candle) {
-  return {
-    time: utcToNseChartTime(candle.time),
-    open: candle.open,
-    high: candle.high,
-    low: candle.low,
-    close: candle.close,
-  }
-}
-
-function toLinePoint(candle) {
-  return {
-    time: utcToNseChartTime(candle.time),
-    value: candle.close,
-  }
-}
-
-function resolveDisplayStatus(wsStatus, marketPhase) {
-  if (marketPhase === 'closed') return 'market_closed'
-  if (marketPhase === 'pre_open') return 'pre_open'
-  return wsStatus
-}
-
-function normalizeStatus(s) {
-  return (s || '').toString().toUpperCase()
-}
-
-function entryFailedMessage(entry) {
-  if (!entry) return null
-  if (normalizeStatus(entry.bootstrapStatus) !== 'FAILED') return null
-  return entry.bootstrapError || `Bootstrap failed for ${entry.tradingSymbol || entry.symbolId}`
-}
-
-/** Candle/bar width in px (LWC default ~6). Applied on create and after symbol/TF load. */
-const BAR_SPACING = 7
-
 /**
- * Chart container state machine (KD25):
- * load watchlist → pick primary → candles + WS for active symbolId
- * On switch: invalidate in-flight (generation), re-fetch, re-subscribe
- * Filter WS by symbolId AND timeframe; per-symbol FAILED banner
+ * Chart shell: watchlist, candles, live socket, pattern alerts/overlays.
+ *
+ * Overlay/alert logic lives in {@link usePatternOverlay}; pure LWC helpers in chart/helpers.
  */
 export default function ChartContainer() {
   const containerRef = useRef(null)
@@ -76,6 +50,7 @@ export default function ChartContainer() {
   const loadGenerationRef = useRef(0)
   const watchlistRef = useRef([])
   const disposedRef = useRef(false)
+  const loadedSeriesKeyRef = useRef(null)
 
   const [watchlist, setWatchlist] = useState([])
   const [activeSymbolId, setActiveSymbolId] = useState(null)
@@ -94,11 +69,25 @@ export default function ChartContainer() {
   activeSymbolIdRef.current = activeSymbolId
   watchlistRef.current = watchlist
 
+  const overlay = usePatternOverlay({
+    chartRef,
+    seriesRef,
+    candlesRef,
+    activeSymbolIdRef,
+    timeframeRef,
+    loadedSeriesKeyRef,
+    disposedRef,
+    loading,
+    activeSymbolId,
+    timeframe,
+  })
+
   const activeEntry = watchlist.find((e) => e.symbolId === activeSymbolId) ?? null
   const displayName =
     activeEntry?.tradingSymbol || activeEntry?.displayName || activeSymbolId || '…'
   const activeIsFailed = normalizeStatus(activeEntry?.bootstrapStatus) === 'FAILED'
   const activeIsPending = normalizeStatus(activeEntry?.bootstrapStatus) === 'PENDING'
+  const symbolLabels = useMemo(() => buildSymbolLabels(watchlist), [watchlist])
 
   const updateConnectionStatus = useCallback((wsStatus, marketPhase) => {
     wsStatusRef.current = wsStatus
@@ -112,78 +101,14 @@ export default function ChartContainer() {
     candlesRef.current.set(candle.time, candle)
   }
 
-  function getSortedCandles() {
-    return Array.from(candlesRef.current.values()).sort((a, b) => a.time - b.time)
-  }
-
-  function mapSeriesData(type, candles) {
-    return type === 'line'
-      ? candles.map(toLinePoint)
-      : candles.map(toCandlestickPoint)
-  }
-
-  /**
-   * Bulk-load series data. After setData, re-enable price autoScale so a manual
-   * price zoom on the previous symbol does not stick when switching stocks/TFs.
-   * Do NOT fitContent() over full history — that crushes barSpacing to min and
-   * makes candles look tiny. Keep spacing and scroll to the latest bars.
-   */
-  function applySeriesData(series, type, { resetView = true } = {}) {
-    const candles = getSortedCandles()
-    series.setData(mapSeriesData(type, candles))
-    if (resetView) {
-      // User zoom/scroll on the price scale turns autoScale off; restore it
-      // so the next symbol gets a full price range for its own data.
-      series.priceScale().applyOptions({ autoScale: true })
-      const chart = chartRef.current
-      if (chart && candles.length > 0) {
-        chart.timeScale().applyOptions({ barSpacing: BAR_SPACING })
-        chart.timeScale().scrollToRealTime()
-      }
-    }
-  }
-
-  function createSeries(chart, type) {
-    if (type === 'line') {
-      return chart.addSeries(LineSeries, {
-        color: '#38bdf8',
-        lineWidth: 2,
-        priceLineVisible: false,
-      })
-    }
-
-    return chart.addSeries(CandlestickSeries, {
-      upColor: '#22c55e',
-      downColor: '#ef4444',
-      borderVisible: false,
-      wickUpColor: '#22c55e',
-      wickDownColor: '#ef4444',
-    })
-  }
-
-  function switchChartType(type) {
-    const chart = chartRef.current
-    if (!chart) return
-
-    if (seriesRef.current) {
-      chart.removeSeries(seriesRef.current)
-    }
-
-    const series = createSeries(chart, type)
-    applySeriesData(series, type)
-    seriesRef.current = series
-  }
-
   function applyFailedBanner(entry) {
     const msg = entryFailedMessage(entry)
-    if (msg) {
-      setError(msg)
-    }
+    if (msg) setError(msg)
   }
 
   function applyInfoAfterLoad(candles) {
     if (marketPhaseRef.current === 'closed') {
-      setInfoMessage('Market is closed. Showing last available candle data.')
+      setInfoMessage(MARKET_CLOSED_MSG)
     } else if (!candles || candles.length === 0) {
       setInfoMessage('No candle data available yet.')
     } else {
@@ -192,21 +117,62 @@ export default function ChartContainer() {
   }
 
   /**
-   * Fetch candles for symbol+tf with generation guard; apply to chart if still current.
+   * Bulk-load series data; re-attach pattern overlay when data is ready.
    */
+  function applySeriesData(series, type, { resetView = true } = {}) {
+    const candles = sortedCandlesFromMap(candlesRef.current)
+    overlay.wipeOverlay()
+    series.setData(mapSeriesData(type, candles))
+
+    const restoring = overlay.willRestoreForCurrentSeries()
+
+    if (resetView) {
+      series.priceScale().applyOptions({ autoScale: true })
+      const chart = chartRef.current
+      if (chart && candles.length > 0) {
+        chart.timeScale().applyOptions({ barSpacing: BAR_SPACING })
+        if (!restoring) {
+          chart.timeScale().scrollToRealTime()
+        }
+      }
+    }
+    overlay.restoreOverlayAfterData({ focusView: resetView })
+  }
+
+  function switchChartType(type) {
+    const chart = chartRef.current
+    if (!chart) return
+
+    const keepAlert = overlay.captureKeepAlertForChartTypeSwitch()
+    overlay.wipeOverlay()
+    if (seriesRef.current) {
+      chart.removeSeries(seriesRef.current)
+    }
+
+    const series = createPriceSeries(chart, type)
+    seriesRef.current = series
+    if (keepAlert) {
+      overlay.setPendingAlert(keepAlert)
+    }
+    applySeriesData(series, type)
+  }
+
   const loadCandles = useCallback(async (symbolId, tf, generation) => {
     const candles = await fetchCandles({ symbolId, timeframe: tf })
     if (generation !== loadGenerationRef.current) {
-      return null // stale
+      return null
     }
     candlesRef.current.clear()
     candles.forEach((candle) => {
       candlesRef.current.set(candle.time, candle)
     })
+    loadedSeriesKeyRef.current = seriesKey(symbolId, tf)
     if (seriesRef.current) {
       applySeriesData(seriesRef.current, chartTypeRef.current)
     }
     return candles
+    // applySeriesData/overlay closed over latest render; mount-style usage via generation
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // ── Init: watchlist → status → candles → chart + WS ──────────────────
@@ -238,7 +204,6 @@ export default function ChartContainer() {
         setWatchlist(entries)
         watchlistRef.current = entries
 
-        // Global FAILED with empty / all-failed watchlist → hard bail
         const globalFailed = normalizeStatus(status.bootstrapStatus) === 'FAILED'
         const anyUsable = entries.some((e) => normalizeStatus(e.bootstrapStatus) !== 'FAILED')
 
@@ -249,7 +214,6 @@ export default function ChartContainer() {
           return
         }
 
-        // PENDING poll: wait for at least one READY (or give up after ~2 min)
         let polls = 0
         while (
           !disposedRef.current &&
@@ -277,7 +241,6 @@ export default function ChartContainer() {
 
         if (disposedRef.current) return
 
-        // Prefer first READY; otherwise first entry (seed order)
         const primary =
           entries.find((e) => normalizeStatus(e.bootstrapStatus) === 'READY') ||
           entries[0] ||
@@ -300,7 +263,7 @@ export default function ChartContainer() {
         }
 
         if (marketPhaseRef.current === 'closed') {
-          setInfoMessage('Market is closed. Showing last available candle data.')
+          setInfoMessage(MARKET_CLOSED_MSG)
         } else if (normalizeStatus(primary.bootstrapStatus) === 'PENDING') {
           setInfoMessage('Loading market data…')
         } else {
@@ -308,10 +271,9 @@ export default function ChartContainer() {
         }
 
         const generation = ++loadGenerationRef.current
-        let candles = []
         if (normalizeStatus(primary.bootstrapStatus) === 'READY') {
           try {
-            candles = await loadCandles(primary.symbolId, initialTf, generation)
+            const candles = await loadCandles(primary.symbolId, initialTf, generation)
             if (disposedRef.current || candles === null) return
             applyInfoAfterLoad(candles)
           } catch (err) {
@@ -320,40 +282,15 @@ export default function ChartContainer() {
             }
           }
         } else if (normalizeStatus(primary.bootstrapStatus) === 'PENDING') {
-          // PENDING returns [] from backend; keep empty until post-init poll recovers
           candlesRef.current.clear()
+          loadedSeriesKeyRef.current = seriesKey(primary.symbolId, initialTf)
         }
 
         if (disposedRef.current) return
 
-        const chart = createChart(containerRef.current, {
-          layout: {
-            background: { type: ColorType.Solid, color: '#0f1117' },
-            textColor: '#94a3b8',
-          },
-          grid: {
-            vertLines: { color: '#1e2433' },
-            horzLines: { color: '#1e2433' },
-          },
-          rightPriceScale: {
-            borderColor: '#2a3144',
-          },
-          timeScale: {
-            borderColor: '#2a3144',
-            timeVisible: true,
-            secondsVisible: false,
-            // Wider than LWC default (~6); re-applied on each symbol/TF load
-            barSpacing: BAR_SPACING,
-            minBarSpacing: 2,
-          },
-          crosshair: {
-            vertLine: { color: '#475569' },
-            horzLine: { color: '#475569' },
-          },
-        })
-
+        const chart = createChart(containerRef.current, defaultChartOptions())
         chartRef.current = chart
-        seriesRef.current = createSeries(chart, chartTypeRef.current)
+        seriesRef.current = createPriceSeries(chart, chartTypeRef.current)
         applySeriesData(seriesRef.current, chartTypeRef.current)
 
         resizeObserver = new ResizeObserver((entriesRo) => {
@@ -368,7 +305,6 @@ export default function ChartContainer() {
           onStatus: (wsStatus, message) => {
             if (disposedRef.current) return
             if (wsStatus === 'error' && message) {
-              // Don't clobber per-symbol bootstrapError with WS noise while FAILED
               const active = watchlistRef.current.find(
                 (e) => e.symbolId === activeSymbolIdRef.current,
               )
@@ -382,25 +318,23 @@ export default function ChartContainer() {
             if (message.type === 'market_status') {
               updateConnectionStatus(wsStatusRef.current, message.marketPhase)
               if (message.marketPhase === 'closed') {
-                setInfoMessage('Market is closed. Showing last available candle data.')
+                setInfoMessage(MARKET_CLOSED_MSG)
               } else {
-                setInfoMessage((prev) =>
-                  prev === 'Market is closed. Showing last available candle data.'
-                    ? null
-                    : prev,
-                )
+                setInfoMessage((prev) => (prev === MARKET_CLOSED_MSG ? null : prev))
               }
               return
             }
 
+            if (message.type === 'pattern_event') {
+              overlay.pushPatternAlert(message)
+              return
+            }
+
             if (message.type === 'candle_update' || message.type === 'candle_closed') {
-              // Required (KD25): accept only matching symbolId AND timeframe
               if (message.symbolId !== activeSymbolIdRef.current) return
               if (message.timeframe !== timeframeRef.current) return
               if (!message.candle) return
               upsertCandle(message.candle)
-              // LWC requires update time >= last series time; skip stale/misaligned bars
-              // rather than throwing (which surfaces as a broken live connection).
               try {
                 seriesRef.current?.update(
                   chartTypeRef.current === 'line'
@@ -445,8 +379,7 @@ export default function ChartContainer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only init
   }, [updateConnectionStatus, loadCandles])
 
-  // ── Post-init PENDING recovery: poll while any entry is PENDING ──────
-  // Uses refs so effect cleanup does not cancel an in-flight READY recovery load.
+  // ── PENDING recovery poll ────────────────────────────────────────────
   const needsPendingPoll =
     !loading &&
     watchlist.some((e) => normalizeStatus(e.bootstrapStatus) === 'PENDING')
@@ -468,12 +401,7 @@ export default function ChartContainer() {
         setError(null)
         setInfoMessage(null)
         try {
-          const candles = await loadCandles(
-            activeId,
-            timeframeRef.current,
-            generation,
-          )
-          // generation / disposed only — not effect `stopped` (READY load must finish)
+          const candles = await loadCandles(activeId, timeframeRef.current, generation)
           if (candles === null || disposedRef.current) return
           applyInfoAfterLoad(candles)
           socketRef.current?.subscribe(activeId, timeframeRef.current)
@@ -491,16 +419,13 @@ export default function ChartContainer() {
         setInfoMessage(null)
       } else if (nextStatus === 'PENDING') {
         setInfoMessage((prevMsg) =>
-          prevMsg === 'Market is closed. Showing last available candle data.'
-            ? prevMsg
-            : 'Loading market data…',
+          prevMsg === MARKET_CLOSED_MSG ? prevMsg : 'Loading market data…',
         )
       }
     }
 
     async function pollPending() {
       if (stopped || disposedRef.current) return
-
       const stillPending = watchlistRef.current.some(
         (e) => normalizeStatus(e.bootstrapStatus) === 'PENDING',
       )
@@ -509,22 +434,19 @@ export default function ChartContainer() {
       try {
         const entries = await fetchWatchlist()
         if (stopped || disposedRef.current) return
-
         const prev = watchlistRef.current
         setWatchlist(entries)
         watchlistRef.current = entries
-
         const activeId = activeSymbolIdRef.current
         if (activeId) {
           const prevActive = prev.find((e) => e.symbolId === activeId)
           const nextActive = entries.find((e) => e.symbolId === activeId)
           if (nextActive) {
-            // fire recovery without blocking the poll loop
             void recoverActiveIfReady(prevActive, nextActive)
           }
         }
       } catch {
-        // transient — keep polling
+        // transient
       }
 
       if (!stopped && !disposedRef.current) {
@@ -533,26 +455,50 @@ export default function ChartContainer() {
     }
 
     timer = setTimeout(pollPending, 1000)
-
     return () => {
       stopped = true
       if (timer) clearTimeout(timer)
     }
   }, [needsPendingPoll, loadCandles])
 
+  const chartTypeEffectReadyRef = useRef(false)
+
   useEffect(() => {
-    if (!chartRef.current || loading) return
+    // Init already builds the series; only react to user chart-type changes after ready
+    if (!chartRef.current || loading) {
+      if (!loading) chartTypeEffectReadyRef.current = true
+      return
+    }
+    if (!chartTypeEffectReadyRef.current) {
+      chartTypeEffectReadyRef.current = true
+      return
+    }
     switchChartType(chartType)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chartType, loading])
 
+  function clearSeriesDataFor(symbolId, tf) {
+    candlesRef.current.clear()
+    loadedSeriesKeyRef.current = seriesKey(symbolId, tf)
+    if (seriesRef.current) {
+      applySeriesData(seriesRef.current, chartTypeRef.current)
+    }
+  }
+
   /**
-   * Switch active chart symbol. Optional `entryHint` avoids relying on stale
-   * React state right after add/remove refreshes the list.
-   * Allows mid-flight supersede: always bumps generation so in-flight loads are discarded.
+   * Navigate to a symbol: always remember/wipe overlay for the series being left.
    */
-  async function switchToSymbol(nextSymbolId, entryHint = null, { force = false } = {}) {
+  async function switchToSymbol(
+    nextSymbolId,
+    entryHint = null,
+    { force = false, navigateOverlay = true } = {},
+  ) {
     if (!nextSymbolId || loading) return
     if (!force && nextSymbolId === activeSymbolIdRef.current) return
+
+    if (navigateOverlay) {
+      overlay.beginSeriesNavigation(nextSymbolId, timeframeRef.current)
+    }
 
     const generation = ++loadGenerationRef.current
     setSwitching(true)
@@ -568,34 +514,23 @@ export default function ChartContainer() {
 
     if (normalizeStatus(entry?.bootstrapStatus) === 'FAILED') {
       applyFailedBanner(entry)
-      candlesRef.current.clear()
-      if (seriesRef.current) {
-        applySeriesData(seriesRef.current, chartTypeRef.current)
-      }
+      clearSeriesDataFor(nextSymbolId, timeframeRef.current)
       socketRef.current?.subscribe(nextSymbolId, timeframeRef.current)
-      if (generation === loadGenerationRef.current) {
-        setSwitching(false)
-      }
+      if (generation === loadGenerationRef.current) setSwitching(false)
       return
     }
 
     if (normalizeStatus(entry?.bootstrapStatus) === 'PENDING') {
-      // Wait for post-init PENDING poll to recover; clear series for now
-      candlesRef.current.clear()
-      if (seriesRef.current) {
-        applySeriesData(seriesRef.current, chartTypeRef.current)
-      }
+      clearSeriesDataFor(nextSymbolId, timeframeRef.current)
       setInfoMessage('Loading market data…')
       socketRef.current?.subscribe(nextSymbolId, timeframeRef.current)
-      if (generation === loadGenerationRef.current) {
-        setSwitching(false)
-      }
+      if (generation === loadGenerationRef.current) setSwitching(false)
       return
     }
 
     try {
       const candles = await loadCandles(nextSymbolId, timeframeRef.current, generation)
-      if (candles === null) return // superseded
+      if (candles === null) return
       applyInfoAfterLoad(candles)
       socketRef.current?.subscribe(nextSymbolId, timeframeRef.current)
     } catch (err) {
@@ -603,43 +538,42 @@ export default function ChartContainer() {
         setError(err instanceof Error ? err.message : 'Failed to load symbol')
       }
     } finally {
-      if (generation === loadGenerationRef.current) {
-        setSwitching(false)
-      }
+      if (generation === loadGenerationRef.current) setSwitching(false)
     }
   }
 
-  // Open #1: allow superseding in-flight symbol switch via generation bump
   function handleSymbolChange(nextSymbolId) {
     if (adding || loading) return
+    if (!nextSymbolId || nextSymbolId === activeSymbolIdRef.current) return
+    // beginSeriesNavigation inside switchToSymbol
     return switchToSymbol(nextSymbolId)
   }
 
-  // ── Timeframe switch (preserve symbol + chart type) ──────────────────
   async function handleTimeframeChange(nextTf) {
-    if (nextTf === timeframe || loading || !activeSymbolId) return
-    // Allow supersede while switching (generation), but not while adding
-    if (adding) return
+    if (nextTf === timeframe || loading || !activeSymbolId || adding) return
+
+    overlay.beginSeriesNavigation(activeSymbolIdRef.current, nextTf)
+
+    // TF refs before load so restore matches pending
+    setTimeframe(nextTf)
+    timeframeRef.current = nextTf
 
     const entry =
       watchlistRef.current.find((e) => e.symbolId === activeSymbolIdRef.current) ||
       null
 
-    // Open #3: FAILED — skip candles fetch (would 503), keep bootstrapError
+    // Always drop old-TF candles so header/live stream cannot mix series
+    clearSeriesDataFor(activeSymbolIdRef.current, nextTf)
+
     if (normalizeStatus(entry?.bootstrapStatus) === 'FAILED') {
-      ++loadGenerationRef.current // discard any in-flight load
-      setTimeframe(nextTf)
-      timeframeRef.current = nextTf
+      ++loadGenerationRef.current
       applyFailedBanner(entry)
       socketRef.current?.subscribe(activeSymbolIdRef.current, nextTf)
       return
     }
 
-    // PENDING — update TF locally; post-init poll will load when READY
     if (normalizeStatus(entry?.bootstrapStatus) === 'PENDING') {
       ++loadGenerationRef.current
-      setTimeframe(nextTf)
-      timeframeRef.current = nextTf
       setInfoMessage('Loading market data…')
       socketRef.current?.subscribe(activeSymbolIdRef.current, nextTf)
       return
@@ -652,13 +586,10 @@ export default function ChartContainer() {
     try {
       const candles = await loadCandles(activeSymbolIdRef.current, nextTf, generation)
       if (candles === null) return
-      setTimeframe(nextTf)
-      timeframeRef.current = nextTf
       applyInfoAfterLoad(candles)
       socketRef.current?.subscribe(activeSymbolIdRef.current, nextTf)
     } catch (err) {
       if (generation === loadGenerationRef.current) {
-        // Prefer bootstrapError if active is FAILED mid-flight
         const active = watchlistRef.current.find(
           (e) => e.symbolId === activeSymbolIdRef.current,
         )
@@ -669,13 +600,106 @@ export default function ChartContainer() {
         )
       }
     } finally {
-      if (generation === loadGenerationRef.current) {
-        setSwitching(false)
-      }
+      if (generation === loadGenerationRef.current) setSwitching(false)
     }
   }
 
-  // ── Add symbol (string trading symbol or { symbol, instrumentKey }) ───
+  async function handleAlertSelect(alert) {
+    if (!alert || loading || adding) return
+
+    const entry =
+      watchlistRef.current.find((e) => e.symbolId === alert.symbolId) || null
+
+    if (!entry) {
+      setError('Symbol is not on the watchlist for this alert.')
+      overlay.setFocusSelection(alert)
+      overlay.clearPendingAlert()
+      return
+    }
+
+    if (
+      activeSymbolIdRef.current &&
+      timeframeRef.current &&
+      (alert.symbolId !== activeSymbolIdRef.current ||
+        alert.timeframe !== timeframeRef.current)
+    ) {
+      overlay.rememberOverlay(
+        activeSymbolIdRef.current,
+        timeframeRef.current,
+        overlay.focusedInstanceIdRef.current,
+        overlay.selectedAlertIdRef.current,
+      )
+    }
+
+    overlay.setFocusSelection(alert)
+    overlay.setPendingAlert(alert)
+    overlay.rememberOverlay(
+      alert.symbolId,
+      alert.timeframe,
+      alert.instanceId,
+      alert.id,
+    )
+
+    const sameSymbol = alert.symbolId === activeSymbolIdRef.current
+    const sameTf = alert.timeframe === timeframeRef.current
+
+    if (sameSymbol && sameTf) {
+      overlay.paintOverlayIfReady(alert)
+      overlay.clearPendingAlert()
+      return
+    }
+
+    if (normalizeStatus(entry.bootstrapStatus) === 'FAILED') {
+      applyFailedBanner(entry)
+      setActiveSymbolId(alert.symbolId)
+      activeSymbolIdRef.current = alert.symbolId
+      setTimeframe(alert.timeframe)
+      timeframeRef.current = alert.timeframe
+      candlesRef.current.clear()
+      loadedSeriesKeyRef.current = seriesKey(alert.symbolId, alert.timeframe)
+      overlay.wipeOverlay()
+      if (seriesRef.current) {
+        applySeriesData(seriesRef.current, chartTypeRef.current)
+      }
+      socketRef.current?.subscribe(alert.symbolId, alert.timeframe)
+      overlay.clearPendingAlert()
+      return
+    }
+
+    const generation = ++loadGenerationRef.current
+    setSwitching(true)
+    setError(null)
+    setActiveSymbolId(alert.symbolId)
+    activeSymbolIdRef.current = alert.symbolId
+    setTimeframe(alert.timeframe)
+    timeframeRef.current = alert.timeframe
+
+    if (normalizeStatus(entry.bootstrapStatus) === 'PENDING') {
+      candlesRef.current.clear()
+      loadedSeriesKeyRef.current = seriesKey(alert.symbolId, alert.timeframe)
+      if (seriesRef.current) {
+        applySeriesData(seriesRef.current, chartTypeRef.current)
+      }
+      setInfoMessage('Loading market data…')
+      socketRef.current?.subscribe(alert.symbolId, alert.timeframe)
+      if (generation === loadGenerationRef.current) setSwitching(false)
+      return
+    }
+
+    try {
+      const candles = await loadCandles(alert.symbolId, alert.timeframe, generation)
+      if (candles === null) return
+      applyInfoAfterLoad(candles)
+      socketRef.current?.subscribe(alert.symbolId, alert.timeframe)
+    } catch (err) {
+      if (generation === loadGenerationRef.current) {
+        setError(err instanceof Error ? err.message : 'Failed to open alert on chart')
+      }
+    } finally {
+      if (generation === loadGenerationRef.current) setSwitching(false)
+    }
+  }
+
   async function handleAdd(input) {
     setAdding(true)
     setError(null)
@@ -699,8 +723,8 @@ export default function ChartContainer() {
         return
       }
 
-      // Auto-switch to the newly added symbol (pass entry to avoid stale state)
       setInfoMessage(null)
+      // Navigates overlay memory for the series being left
       await switchToSymbol(entry.symbolId, entry, { force: true })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add symbol')
@@ -710,7 +734,6 @@ export default function ChartContainer() {
     }
   }
 
-  // ── Remove active symbol ─────────────────────────────────────────────
   async function handleRemove(symbolId) {
     if (!symbolId || loading || adding) return
     setError(null)
@@ -726,6 +749,8 @@ export default function ChartContainer() {
         setActiveSymbolId(null)
         activeSymbolIdRef.current = null
         candlesRef.current.clear()
+        loadedSeriesKeyRef.current = null
+        overlay.resetOverlayForEmptyWatchlist()
         if (seriesRef.current) {
           applySeriesData(seriesRef.current, chartTypeRef.current)
         }
@@ -737,6 +762,7 @@ export default function ChartContainer() {
         const next =
           refreshed.find((e) => normalizeStatus(e.bootstrapStatus) === 'READY') ||
           refreshed[0]
+        // beginSeriesNavigation runs inside switchToSymbol
         await switchToSymbol(next.symbolId, next, { force: true })
       }
     } catch (err) {
@@ -754,12 +780,6 @@ export default function ChartContainer() {
           <ConnectionStatus status={connectionStatus} />
         </div>
         <div className="chart-header__controls">
-          <TimeframeSelector
-            timeframes={timeframes}
-            value={timeframe}
-            onChange={handleTimeframeChange}
-            disabled={loading || adding || !activeSymbolId || activeIsFailed}
-          />
           <ChartTypeToggle chartType={chartType} onChange={setChartType} />
         </div>
       </header>
@@ -768,6 +788,23 @@ export default function ChartContainer() {
       {!error && infoMessage && <div className="chart-info">{infoMessage}</div>}
 
       <div className="chart-body">
+        <aside className="tf-rail" aria-label="Timeframes">
+          <div className="tf-rail__label">TF</div>
+          <TimeframeSelector
+            orientation="vertical"
+            timeframes={timeframes}
+            value={timeframe}
+            onChange={handleTimeframeChange}
+            disabled={
+              loading ||
+              adding ||
+              !activeSymbolId ||
+              activeIsFailed ||
+              activeIsPending
+            }
+          />
+        </aside>
+
         <div className="chart-panel">
           {(loading || switching || activeIsPending) && (
             <div className="chart-loading">
@@ -782,15 +819,26 @@ export default function ChartContainer() {
           )}
           <div ref={containerRef} className="chart-container" />
         </div>
-        <SymbolSwitcher
-          watchlist={watchlist}
-          activeSymbolId={activeSymbolId}
-          onSelect={handleSymbolChange}
-          onAdd={handleAdd}
-          onRemove={handleRemove}
-          disabled={loading}
-          adding={adding}
-        />
+
+        <div className="right-rail">
+          <AlertsFeed
+            alerts={overlay.alerts}
+            selectedId={overlay.selectedAlertId}
+            selectedInstanceId={overlay.selectedInstanceId}
+            onSelect={handleAlertSelect}
+            onClear={overlay.clearAllAlerts}
+            symbolLabels={symbolLabels}
+          />
+          <SymbolSwitcher
+            watchlist={watchlist}
+            activeSymbolId={activeSymbolId}
+            onSelect={handleSymbolChange}
+            onAdd={handleAdd}
+            onRemove={handleRemove}
+            disabled={loading}
+            adding={adding}
+          />
+        </div>
       </div>
     </div>
   )

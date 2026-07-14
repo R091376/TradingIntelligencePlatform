@@ -37,7 +37,8 @@ class WatchlistRemovePatternListenerTest {
         store = new ActiveInstanceStore();
         journal = mock(PatternJournal.class);
         publisher = mock(PatternEventPublisher.class);
-        listener = new WatchlistRemovePatternListener(guard, store, journal, publisher);
+        listener = new WatchlistRemovePatternListener(
+                guard, store, journal, publisher, new PatternSeriesGate());
         when(guard.isFullyEnabled()).thenReturn(true);
     }
 
