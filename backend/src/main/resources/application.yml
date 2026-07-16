@@ -182,3 +182,10 @@ tip:
     refresh-on-startup: true
   cors:
     allowed-origins: http://localhost:5173
+  users:
+    # Paper cash (INR) for new users and admin cash reset default.
+    default-seed-cash: 100000
+    admin-username: admin
+    # Override in .env: TIP_ADMIN_PASSWORD=...
+    admin-password: ${TIP_ADMIN_PASSWORD:admin}
+    admin-display-name: Administrator

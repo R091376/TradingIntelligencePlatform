@@ -8,6 +8,8 @@ export function encodeSymbolId(symbolId) {
   return encodeURIComponent(symbolId)
 }
 
+const cred = { credentials: 'include' }
+
 function parseErrorMessage(status, body) {
   if (status === 503) {
     return body || 'Market data is temporarily unavailable. Check your Upstox token in .env.'
@@ -21,8 +23,11 @@ function parseErrorMessage(status, body) {
   if (status === 409) {
     return body || 'Symbol already on watchlist or watchlist is full.'
   }
-  if (status === 401 || status === 403) {
-    return 'Upstox access token is invalid or expired. Update UPSTOX_ACCESS_TOKEN in .env.'
+  if (status === 401) {
+    return 'Not signed in. Please log in again.'
+  }
+  if (status === 403) {
+    return 'Only admins can add or remove watchlist symbols.'
   }
   if (status >= 500) {
     return 'Backend error. Make sure the server is running on port 8080.'
@@ -43,16 +48,13 @@ async function handleResponse(response) {
 
 /** GET /api/watchlist — ordered public-active entries. */
 export async function fetchWatchlist() {
-  const response = await fetch('/api/watchlist')
+  const response = await fetch('/api/watchlist', cred)
   return handleResponse(response)
 }
 
 /**
- * POST /api/watchlist — blocking add.
- * May take up to ~120s while the server seeds candles.
- *
+ * POST /api/watchlist — blocking add (ADMIN only).
  * @param {{ symbol?: string, instrumentKey?: string } | string} input
- *   string = trading symbol (compat); object may include instrumentKey from autocomplete
  */
 export async function addSymbol(input) {
   let body
@@ -68,6 +70,7 @@ export async function addSymbol(input) {
 
   const response = await fetch('/api/watchlist', {
     method: 'POST',
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
@@ -75,12 +78,13 @@ export async function addSymbol(input) {
 }
 
 /**
- * DELETE /api/watchlist/{symbolId}
+ * DELETE /api/watchlist/{symbolId} (ADMIN only).
  * @param {string} symbolId instrument key
  */
 export async function removeSymbol(symbolId) {
   const response = await fetch(`/api/watchlist/${encodeSymbolId(symbolId)}`, {
     method: 'DELETE',
+    credentials: 'include',
   })
   return handleResponse(response)
 }

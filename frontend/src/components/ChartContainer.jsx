@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { createChart } from 'lightweight-charts'
+import { useAuth } from '../auth/AuthContext'
 import {
   DEFAULT_TIMEFRAME,
   DEFAULT_TIMEFRAMES,
@@ -47,6 +49,7 @@ import TimeframeSelector from './TimeframeSelector'
  * Overlay/alert logic lives in {@link usePatternOverlay}; pure LWC helpers in chart/helpers.
  */
 export default function ChartContainer() {
+  const { user, isAdmin, logout } = useAuth()
   const containerRef = useRef(null)
   const chartRef = useRef(null)
   const seriesRef = useRef(null)
@@ -446,11 +449,23 @@ export default function ChartContainer() {
         socketRef.current = localSocket
 
         if (isStale()) {
-          localSocket.close()
+          try {
+            localSocket.close()
+          } catch {
+            // ignore
+          }
           localSocket = null
           socketRef.current = null
-          resizeObserver?.disconnect()
-          chart.remove()
+          try {
+            resizeObserver?.disconnect()
+          } catch {
+            // ignore
+          }
+          try {
+            chart.remove()
+          } catch {
+            // ignore
+          }
           localChart = null
           chartRef.current = null
           seriesRef.current = null
@@ -477,17 +492,39 @@ export default function ChartContainer() {
       disposedRef.current = true
       loadGenerationRef.current += 1
       if (pollTimer) clearTimeout(pollTimer)
-      localSocket?.close()
-      socketRef.current?.close()
+      try {
+        localSocket?.close()
+      } catch {
+        // ignore
+      }
+      try {
+        if (socketRef.current && socketRef.current !== localSocket) {
+          socketRef.current.close()
+        }
+      } catch {
+        // ignore
+      }
       socketRef.current = null
-      resizeObserver?.disconnect()
-      localChart?.remove()
-      chartRef.current?.remove()
+      try {
+        resizeObserver?.disconnect()
+      } catch {
+        // ignore
+      }
+      // Remove chart once only — double remove() throws and can blank the next route.
+      const chartToRemove = localChart || chartRef.current
+      localChart = null
       chartRef.current = null
       seriesRef.current = null
       volumeSeriesRef.current = null
       volumeSmaSeriesRef.current = null
       ohlcHoveringRef.current = false
+      if (chartToRemove) {
+        try {
+          chartToRemove.remove()
+        } catch {
+          // LWC may throw if already disposed
+        }
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only init
   }, [updateConnectionStatus, loadCandles])
@@ -912,6 +949,33 @@ export default function ChartContainer() {
           />
           <ChartTypeToggle chartType={chartType} onChange={setChartType} />
         </div>
+
+        <div className="chart-header__user">
+          <span className="chart-header__user-name" title={user?.username}>
+            {user?.displayName || user?.username}
+            {user?.cashBalance != null && (
+              <span className="chart-header__cash">
+                {' '}
+                · ₹
+                {Number(user.cashBalance).toLocaleString('en-IN', {
+                  maximumFractionDigits: 0,
+                })}
+              </span>
+            )}
+          </span>
+          {isAdmin && (
+            <Link to="/admin/users" className="chart-header__admin-link">
+              Admin
+            </Link>
+          )}
+          <button
+            type="button"
+            className="chart-header__logout"
+            onClick={() => logout()}
+          >
+            Logout
+          </button>
+        </div>
       </header>
 
       {error && <div className="chart-error">{error}</div>}
@@ -951,6 +1015,7 @@ export default function ChartContainer() {
             onRemove={handleRemove}
             disabled={loading}
             adding={adding}
+            canManage={isAdmin}
           />
         </div>
       </div>

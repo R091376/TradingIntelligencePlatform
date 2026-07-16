@@ -14,6 +14,8 @@ export default function SymbolSwitcher({
   disabled,
   adding,
   hardMax = 50,
+  /** Only admins may add/remove shared watchlist symbols. */
+  canManage = false,
 }) {
   const [removingId, setRemovingId] = useState(null)
 
@@ -23,7 +25,7 @@ export default function SymbolSwitcher({
   )
 
   async function handleRemove(symbolId) {
-    if (!symbolId || disabled || adding) return
+    if (!canManage || !symbolId || disabled || adding) return
     setRemovingId(symbolId)
     try {
       await onRemove(symbolId)
@@ -43,24 +45,31 @@ export default function SymbolSwitcher({
         </span>
       </div>
 
-      <div className="watchlist-sidebar__search">
-        <InstrumentSearch
-          onAdd={onAdd}
-          watchlistKeys={watchlistKeys}
-          hardMax={hardMax}
-          watchlistSize={count}
-          disabled={disabled}
-          adding={adding}
-          compact
-        />
-      </div>
+      {canManage ? (
+        <div className="watchlist-sidebar__search">
+          <InstrumentSearch
+            onAdd={onAdd}
+            watchlistKeys={watchlistKeys}
+            hardMax={hardMax}
+            watchlistSize={count}
+            disabled={disabled}
+            adding={adding}
+            compact
+          />
+        </div>
+      ) : (
+        <p className="watchlist-sidebar__readonly-hint">
+          Shared list — only admins can add or remove symbols.
+        </p>
+      )}
 
+      {/* Add/remove is admin-only; every user can still switch the active chart symbol. */}
       <div className="watchlist-sidebar__list">
         <WatchlistBar
           watchlist={watchlist}
           activeSymbolId={activeSymbolId}
           onSelect={onSelect}
-          onRemove={handleRemove}
+          onRemove={canManage ? handleRemove : undefined}
           disabled={disabled || adding}
           removingId={removingId}
         />

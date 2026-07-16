@@ -3,6 +3,8 @@ import { encodeSymbolId } from './watchlistApi'
 const DEFAULT_TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h', '1d']
 const DEFAULT_TIMEFRAME = '5m'
 
+const cred = { credentials: 'include' }
+
 function parseErrorMessage(status, body) {
   if (status === 503) {
     return body || 'Market data is temporarily unavailable. Check your Upstox token in .env.'
@@ -13,8 +15,11 @@ function parseErrorMessage(status, body) {
   if (status === 404) {
     return body || 'Symbol not found.'
   }
-  if (status === 401 || status === 403) {
-    return 'Upstox access token is invalid or expired. Update UPSTOX_ACCESS_TOKEN in .env.'
+  if (status === 401) {
+    return 'Not signed in. Please log in again.'
+  }
+  if (status === 403) {
+    return body || 'You do not have permission for this action.'
   }
   if (status >= 500) {
     return 'Backend error. Make sure the server is running on port 8080.'
@@ -31,7 +36,7 @@ async function handleResponse(response) {
 }
 
 export async function fetchMarketStatus() {
-  const response = await fetch('/api/market/status')
+  const response = await fetch('/api/market/status', cred)
   return handleResponse(response)
 }
 
@@ -41,7 +46,7 @@ export async function fetchMarketStatus() {
  */
 export async function fetchTimeframes() {
   try {
-    const response = await fetch('/api/market/timeframes')
+    const response = await fetch('/api/market/timeframes', cred)
     if (!response.ok) {
       return { defaultTimeframe: DEFAULT_TIMEFRAME, supported: DEFAULT_TIMEFRAMES }
     }
@@ -68,7 +73,7 @@ export async function fetchCandles({ symbolId, timeframe, from, to } = {}) {
   const query = params.toString()
   const base = `/api/symbols/${encodeSymbolId(symbolId)}/candles`
   const url = query ? `${base}?${query}` : base
-  const response = await fetch(url)
+  const response = await fetch(url, cred)
   return handleResponse(response)
 }
 

@@ -53,6 +53,66 @@
   min-width: 0;
 }
 
+.chart-header__user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.chart-header__user-name {
+  font-size: 0.8125rem;
+  color: #cbd5e1;
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chart-header__cash {
+  color: #86efac;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-header__admin-link {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #c4b5fd;
+  text-decoration: none;
+}
+
+.chart-header__admin-link:hover {
+  color: #ddd6fe;
+}
+
+.chart-header__logout {
+  border: 1px solid #2a3144;
+  background: transparent;
+  color: #94a3b8;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.chart-header__logout:hover {
+  color: #e2e8f0;
+  border-color: #3b445c;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.watchlist-sidebar__readonly-hint {
+  margin: 0;
+  padding: 0 12px 10px;
+  font-size: 0.6875rem;
+  line-height: 1.4;
+  color: #64748b;
+}
+
 /* Main row: chart | alerts + watchlist */
 .chart-body {
   display: flex;

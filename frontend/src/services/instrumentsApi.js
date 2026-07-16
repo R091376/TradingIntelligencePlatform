@@ -37,6 +37,7 @@ export async function searchInstruments(q, limit = 15, signal) {
   if (limit != null) params.set('limit', String(limit))
   const response = await fetch(`/api/instruments/search?${params.toString()}`, {
     signal,
+    credentials: 'include',
   })
   return handleResponse(response)
 }

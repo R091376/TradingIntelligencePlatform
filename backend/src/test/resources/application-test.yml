@@ -18,3 +18,6 @@ tip:
     live-feed-enabled: false
   upstox:
     access-token: ""
+  users:
+    admin-username: admin
+    admin-password: test-admin-password

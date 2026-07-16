@@ -12,7 +12,8 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
         CorsProperties.class,
         WatchlistProperties.class,
         InstrumentProperties.class,
-        PatternProperties.class
+        PatternProperties.class,
+        UserProperties.class
 })
 public class WebConfig implements WebMvcConfigurer {
 
@@ -24,9 +25,11 @@ public class WebConfig implements WebMvcConfigurer {
 
     @Override
     public void addCorsMappings(CorsRegistry registry) {
+        // Credentials required for session cookie login (must not use * origin).
         registry.addMapping("/api/**")
                 .allowedOrigins(corsProperties.allowedOrigins())
-                .allowedMethods("GET", "POST", "DELETE", "OPTIONS")
-                .allowedHeaders("*");
+                .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
+                .allowedHeaders("*")
+                .allowCredentials(true);
     }
 }

@@ -130,25 +130,63 @@ export function buildSymbolLabels(watchlist) {
 }
 
 export function createPriceSeries(chart, type) {
+  // Always pane 0 (main price pane)
   if (type === 'line') {
-    return chart.addSeries(LineSeries, {
-      color: '#38bdf8',
-      lineWidth: 2,
-      priceLineVisible: false,
+    const series = chart.addSeries(
+      LineSeries,
+      {
+        color: '#38bdf8',
+        lineWidth: 2,
+        priceLineVisible: false,
+      },
+      0,
+    )
+    series.priceScale().applyOptions({
+      scaleMargins: { top: 0.08, bottom: 0.05 },
+      borderColor: '#2a3144',
     })
+    return series
   }
 
-  return chart.addSeries(CandlestickSeries, {
-    upColor: '#22c55e',
-    downColor: '#ef4444',
-    borderVisible: false,
-    wickUpColor: '#22c55e',
-    wickDownColor: '#ef4444',
+  const series = chart.addSeries(
+    CandlestickSeries,
+    {
+      upColor: '#22c55e',
+      downColor: '#ef4444',
+      borderVisible: false,
+      wickUpColor: '#22c55e',
+      wickDownColor: '#ef4444',
+    },
+    0,
+  )
+  series.priceScale().applyOptions({
+    scaleMargins: { top: 0.08, bottom: 0.05 },
+    borderColor: '#2a3144',
   })
+  return series
 }
 
 /**
- * Volume histogram on pane 1 (created on first use). Shares scale id with SMA.
+ * Ensure series sits on pane index (LWC may leave it on 0 if pane create races).
+ * @param {import('lightweight-charts').ISeriesApi} series
+ * @param {number} paneIndex
+ */
+function ensureSeriesPane(series, paneIndex) {
+  if (!series || typeof series.moveToPane !== 'function') return
+  try {
+    if (typeof series.paneIndex === 'function' && series.paneIndex() === paneIndex) {
+      return
+    }
+    series.moveToPane(paneIndex)
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Volume histogram on a dedicated pane (index 1).
+ * Do not use a custom priceScaleId — that attaches to the main pane overlay scale
+ * and paints volume on top of price. Pane series use that pane's default right scale.
  * @returns {import('lightweight-charts').ISeriesApi<'Histogram'>}
  */
 export function createVolumeSeries(chart) {
@@ -156,37 +194,38 @@ export function createVolumeSeries(chart) {
     HistogramSeries,
     {
       priceFormat: { type: 'volume' },
-      priceScaleId: 'volume',
       priceLineVisible: false,
       lastValueVisible: true,
       base: 0,
     },
     1,
   )
+  ensureSeriesPane(series, 1)
   series.priceScale().applyOptions({
-    scaleMargins: { top: 0.15, bottom: 0 },
+    scaleMargins: { top: 0.12, bottom: 0 },
     borderColor: '#2a3144',
   })
   return series
 }
 
 /**
- * Volume SMA line on the same pane/scale as the histogram.
+ * Volume SMA on the same pane (1) and default scale as the histogram.
  * @returns {import('lightweight-charts').ISeriesApi<'Line'>}
  */
 export function createVolumeSmaSeries(chart) {
-  return chart.addSeries(
+  const series = chart.addSeries(
     LineSeries,
     {
       color: VOLUME_SMA_COLOR,
       lineWidth: 1,
-      priceScaleId: 'volume',
       priceLineVisible: false,
       lastValueVisible: false,
       crosshairMarkerVisible: false,
     },
     1,
   )
+  ensureSeriesPane(series, 1)
+  return series
 }
 
 /**
@@ -196,10 +235,14 @@ export function createVolumeSmaSeries(chart) {
  */
 export function applyVolumePaneHeight(chart, containerHeight) {
   if (!chart || !(containerHeight > 0)) return
-  const panes = chart.panes()
-  if (panes.length < 2) return
-  const volHeight = Math.max(48, Math.round(containerHeight * VOLUME_PANE_HEIGHT_RATIO))
-  panes[1].setHeight(volHeight)
+  try {
+    const panes = chart.panes()
+    if (!panes || panes.length < 2) return
+    const volHeight = Math.max(56, Math.round(containerHeight * VOLUME_PANE_HEIGHT_RATIO))
+    panes[1].setHeight(volHeight)
+  } catch {
+    // panes API may throw if chart is mid-dispose
+  }
 }
 
 export function defaultChartOptions() {

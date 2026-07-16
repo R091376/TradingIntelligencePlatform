@@ -77,19 +77,21 @@ export default function WatchlistBar({
                 </span>
               )}
             </button>
-            <button
-              type="button"
-              className="watchlist-row__remove"
-              disabled={disabled || busy}
-              onClick={(e) => {
-                e.stopPropagation()
-                onRemove(entry.symbolId)
-              }}
-              aria-label={`Remove ${rowLabel(entry)} from watchlist`}
-              title={`Remove ${rowLabel(entry)}`}
-            >
-              {busy ? '…' : '×'}
-            </button>
+            {typeof onRemove === 'function' && (
+              <button
+                type="button"
+                className="watchlist-row__remove"
+                disabled={disabled || busy}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onRemove(entry.symbolId)
+                }}
+                aria-label={`Remove ${rowLabel(entry)} from watchlist`}
+                title={`Remove ${rowLabel(entry)}`}
+              >
+                {busy ? '…' : '×'}
+              </button>
+            )}
           </li>
         )
       })}
