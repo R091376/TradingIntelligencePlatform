@@ -107,4 +107,30 @@ class MarketStatusServiceTest {
         assertEquals(MarketPhase.OPEN, service.getMarketPhase());
         assertEquals(eventCount, events.size());
     }
+
+    @Test
+    void refreshPhaseFromClock_whenFeedFresh_keepsOpenUnlessClockClosed() {
+        service.setLiveFeedConnected(true);
+        service.updateFromSegmentStatus(Map.of(
+                "NSE_EQ", MarketUpdateV3.MarketStatus.NORMAL_OPEN
+        ));
+        assertEquals(MarketPhase.OPEN, service.getMarketPhase());
+
+        // Without mocking wall clock we can only assert: if clock is OPEN, feed OPEN is kept.
+        // When clock is CLOSED (weekend/after hours/holiday), force CLOSED.
+        MarketPhase clock = NseMarketClock.phaseFromClock();
+        service.refreshPhaseFromClock();
+        if (clock == MarketPhase.CLOSED) {
+            assertEquals(MarketPhase.CLOSED, service.getMarketPhase());
+        } else {
+            assertEquals(MarketPhase.OPEN, service.getMarketPhase());
+        }
+    }
+
+    @Test
+    void refreshPhaseFromClock_withoutFeed_usesClock() {
+        service.setLiveFeedConnected(false);
+        service.refreshPhaseFromClock();
+        assertEquals(NseMarketClock.phaseFromClock(), service.getMarketPhase());
+    }
 }

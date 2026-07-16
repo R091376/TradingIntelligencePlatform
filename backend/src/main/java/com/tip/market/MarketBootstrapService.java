@@ -99,12 +99,22 @@ public class MarketBootstrapService {
             marketStatusService.setBootstrapReady(totalCandles);
             log.info("Session recovery complete: {}/{} symbols READY, total seeded candles≈{}",
                     readyCount, n, totalCandles);
-            connectLiveFeedForActive();
+            ensureLiveFeedConnected();
         } else {
             String message = "Failed to seed any watchlist symbol. Check Upstox token and network.";
             marketStatusService.setBootstrapFailed(message);
             log.error("Session recovery failed: zero symbols READY of {}", n);
         }
+    }
+
+    /**
+     * Connect the live feed if needed, or subscribe any missing active keys.
+     * Safe to call after a single-symbol add when recovery never started the streamer
+     * (zero-READY initial bootstrap left {@code streamer == null}).
+     */
+    public void ensureLiveFeedConnected() {
+        log.info("ensureLiveFeedConnected: ensuring Upstox streamer for active watchlist");
+        connectLiveFeedForActive();
     }
 
     /**
@@ -193,13 +203,14 @@ public class MarketBootstrapService {
             return;
         }
 
+        log.info("Connecting/ensuring live feed for {} instrument key(s)", keys.size());
         List<String> timeframes = marketProperties.supportedTimeframes();
         marketDataProvider.connectLiveFeed(keys, tick -> {
             for (String timeframe : timeframes) {
                 try {
                     candleEngine.processTick(tick, timeframe);
                 } catch (Exception e) {
-                    log.debug("processTick failed for {} {}: {}",
+                    log.warn("processTick failed for {} {}: {}",
                             tick.instrumentKey(), timeframe, e.toString());
                 }
             }

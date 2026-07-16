@@ -19,6 +19,30 @@ spring:
   flyway:
     enabled: true
 
+# Smoke / ops logging: quiet per-tick feed noise; keep reliability + fix observability.
+logging:
+  level:
+    root: INFO
+    # --- Quiet live feed / per-bar spam ---
+    com.tip.market.UpstoxFeedClient: WARN
+    com.tip.market.CandleEngineEventLogger: WARN
+    com.tip.market.IndexVolumeSupport: WARN
+    com.tip.api.websocket.LiveCandleBroadcaster: WARN
+    com.tip.api.websocket.LiveWebSocketHandler: WARN
+    com.upstox: WARN
+    org.hibernate.SQL: WARN
+    # --- Implemented reliability paths (INFO) ---
+    com.tip.market.CandleCloseReconciler: INFO
+    com.tip.market.MarketStatusService: INFO
+    com.tip.market.MarketPhaseClockReconciler: INFO
+    com.tip.market.MarketBootstrapService: INFO
+    com.tip.market.NseMarketClock: INFO
+    com.tip.patterns.PatternEvaluator: INFO
+    com.tip.patterns.SessionExpiryReconciler: INFO
+    com.tip.patterns.PatternFeatureGuard: INFO
+    com.tip.watchlist.WatchlistService: INFO
+    com.tip.journal.PostgresPatternJournal: INFO
+
 tip:
   upstox:
     access-token: ${UPSTOX_ACCESS_TOKEN:}
@@ -66,6 +90,46 @@ tip:
       success-rr: 2.0
       success-atr-mult-without-retest: 2.0
       detector-version: breakdown-v1
+    # Hammer / Shooting Star (Nison pin-bar geometry) — docs/patterns/hammer-shooting-star.md
+    pinbar:
+      shadow-body-mult: 2.0
+      max-body-range-ratio: 0.35
+      max-opposite-wick-range-ratio: 0.25
+      min-range-atr-mult: 0.5
+      success-atr-mult: 1.5
+      require-trend-context: true
+      trend-lookback: 10
+      max-candles-after-detect: 20
+      detector-version: pinbar-v1
+    engulfing:
+      min-range-atr-mult: 0.5
+      success-atr-mult: 1.5
+      max-candles-after-detect: 20
+      detector-version: engulfing-v1
+    inside-bar:
+      min-mother-range-atr-mult: 0.5
+      success-atr-mult: 1.5
+      max-candles-after-detect: 20
+      max-bars-after-inside: 5
+      detector-version: inside-bar-v1
+    structure:
+      fractal-width: 2
+      success-atr-mult: 1.5
+      max-candles-after-detect: 30
+      detector-version: structure-v1
+    consolidation:
+      window-candles: 10
+      range-atr-mult: 1.5
+      max-duration-candles: 30
+      tighten-ratio: 0.85
+      detector-version: consolidation-v1
+    volume-breakout:
+      volume-avg-period: 20
+      volume-multiplier: 2.0
+      min-range-atr-mult: 0.5
+      success-atr-mult: 1.5
+      max-candles-after-detect: 20
+      detector-version: volume-breakout-v1
     expiry:
       # Hard-expire open instances at 15:30 (and on restart as startup_recovery)
       session-close-timeframes: [1m, 5m, 15m]
@@ -79,11 +143,11 @@ tip:
       # Journal always records all stages; WS may filter later.
       broadcast-stages: [detected, confirmed, retested, strengthened, succeeded, failed, expired]
   watchlist:
-    # postgres (default) = durable watchlist in PostgreSQL.
+    # postgres = durable watchlist + pattern journal (required for full pattern pipeline).
     # memory = in-process only, no DB required. Enable with:
     #   TIP_WATCHLIST_STORE=memory
     #   or --spring.profiles.active=memory
-    store: ${TIP_WATCHLIST_STORE:memory}
+    store: ${TIP_WATCHLIST_STORE:postgres}
     # Startup seed = entire list (exactly 10): index first, then 9 top Nifty 50 equities.
     # Order matters: primary / default chart = first entry (NIFTY 50 index).
     seed-symbols:

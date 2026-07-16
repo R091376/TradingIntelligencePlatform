@@ -164,6 +164,59 @@ public class CandleEngine {
     }
 
     /**
+     * Close every in-progress bar whose open time is strictly before the current
+     * wall-clock bucket for its timeframe. Used when ticks stop (session end, quiet
+     * periods) so patterns and charts still receive a final close.
+     *
+     * @param nowEpochMs wall clock in epoch millis
+     * @return number of candles closed
+     */
+    public int closeStaleOpenCandles(long nowEpochMs) {
+        int closedCount = 0;
+        for (Map.Entry<String, SymbolState> entry : stateByKey.entrySet()) {
+            String key = entry.getKey();
+            int pipe = key.lastIndexOf('|');
+            if (pipe <= 0 || pipe >= key.length() - 1) {
+                continue;
+            }
+            String instrumentKey = key.substring(0, pipe);
+            String timeframe = key.substring(pipe + 1);
+            int intervalMinutes;
+            try {
+                intervalMinutes = TimeframeParser.parse(timeframe).intervalMinutes();
+            } catch (RuntimeException ex) {
+                continue;
+            }
+            long currentBoundary = CandleBoundaryUtils.floorToCandleStartEpochSecond(
+                    nowEpochMs, intervalMinutes);
+
+            List<Object> pendingEvents = new ArrayList<>(2);
+            synchronized (entry.getValue()) {
+                SymbolState state = entry.getValue();
+                if (state.currentCandle == null) {
+                    continue;
+                }
+                // Still the active bucket — leave open for live ticks.
+                if (state.currentCandle.time >= currentBoundary) {
+                    continue;
+                }
+                Optional<Candle> closed = closeCurrentCandle(state);
+                closed.ifPresent(c -> {
+                    pendingEvents.add(new CandleClosedEvent(instrumentKey, timeframe, c));
+                    pendingEvents.add(new CandleUpdatedEvent(instrumentKey, timeframe, c, true));
+                });
+            }
+            for (Object event : pendingEvents) {
+                eventPublisher.publishEvent(event);
+            }
+            if (!pendingEvents.isEmpty()) {
+                closedCount++;
+            }
+        }
+        return closedCount;
+    }
+
+    /**
      * Mutates state only; caller publishes events outside the lock.
      */
     private Optional<Candle> closeCurrentCandle(SymbolState state) {

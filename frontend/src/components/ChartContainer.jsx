@@ -11,23 +11,33 @@ import { addSymbol, fetchWatchlist, removeSymbol } from '../services/watchlistAp
 import { createLiveSocket } from '../services/liveSocket'
 import {
   BAR_SPACING,
+  applyVolumePaneHeight,
   buildSymbolLabels,
   createPriceSeries,
+  createVolumeSeries,
+  createVolumeSmaSeries,
   defaultChartOptions,
   entryFailedMessage,
+  findCandleByChartTime,
+  lastVolumeSmaPoint,
+  latestCandleFromMap,
   mapSeriesData,
+  mapVolumeData,
+  mapVolumeSmaData,
   MARKET_CLOSED_MSG,
   normalizeStatus,
   resolveDisplayStatus,
   sortedCandlesFromMap,
   toCandlestickPoint,
   toLinePoint,
+  toVolumePoint,
 } from '../chart/helpers'
 import { usePatternOverlay } from '../chart/usePatternOverlay'
 import { seriesKey } from '../utils/patternOverlay'
 import AlertsFeed from './AlertsFeed'
 import ChartTypeToggle from './ChartTypeToggle'
 import ConnectionStatus from './ConnectionStatus'
+import OhlcLegend from './OhlcLegend'
 import SymbolSwitcher from './SymbolSwitcher'
 import TimeframeSelector from './TimeframeSelector'
 
@@ -40,6 +50,8 @@ export default function ChartContainer() {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
   const seriesRef = useRef(null)
+  const volumeSeriesRef = useRef(null)
+  const volumeSmaSeriesRef = useRef(null)
   const candlesRef = useRef(new Map())
   const chartTypeRef = useRef('candlestick')
   const marketPhaseRef = useRef('unknown')
@@ -51,6 +63,8 @@ export default function ChartContainer() {
   const watchlistRef = useRef([])
   const disposedRef = useRef(false)
   const loadedSeriesKeyRef = useRef(null)
+  /** True while crosshair is over a bar — live ticks must not overwrite hover OHLC. */
+  const ohlcHoveringRef = useRef(false)
 
   const [watchlist, setWatchlist] = useState([])
   const [activeSymbolId, setActiveSymbolId] = useState(null)
@@ -63,6 +77,8 @@ export default function ChartContainer() {
   const [adding, setAdding] = useState(false)
   const [error, setError] = useState(null)
   const [infoMessage, setInfoMessage] = useState(null)
+  /** Always-on OHLC+Vol legend (last bar, or hovered bar). */
+  const [ohlcLegend, setOhlcLegend] = useState(null)
 
   chartTypeRef.current = chartType
   timeframeRef.current = timeframe
@@ -116,6 +132,28 @@ export default function ChartContainer() {
     }
   }
 
+  function applyVolumeSeriesData(candles) {
+    volumeSeriesRef.current?.setData(mapVolumeData(candles))
+    volumeSmaSeriesRef.current?.setData(mapVolumeSmaData(candles))
+  }
+
+  function syncOhlcLegendFromLatest() {
+    if (ohlcHoveringRef.current) return
+    setOhlcLegend(latestCandleFromMap(candlesRef.current))
+  }
+
+  function updateVolumeLive(candle) {
+    try {
+      volumeSeriesRef.current?.update(toVolumePoint(candle))
+      const smaPoint = lastVolumeSmaPoint(sortedCandlesFromMap(candlesRef.current))
+      if (smaPoint) {
+        volumeSmaSeriesRef.current?.update(smaPoint)
+      }
+    } catch {
+      applyVolumeSeriesData(sortedCandlesFromMap(candlesRef.current))
+    }
+  }
+
   /**
    * Bulk-load series data; re-attach pattern overlay when data is ready.
    */
@@ -123,11 +161,14 @@ export default function ChartContainer() {
     const candles = sortedCandlesFromMap(candlesRef.current)
     overlay.wipeOverlay()
     series.setData(mapSeriesData(type, candles))
+    applyVolumeSeriesData(candles)
 
     const restoring = overlay.willRestoreForCurrentSeries()
 
     if (resetView) {
+      ohlcHoveringRef.current = false
       series.priceScale().applyOptions({ autoScale: true })
+      volumeSeriesRef.current?.priceScale().applyOptions({ autoScale: true })
       const chart = chartRef.current
       if (chart && candles.length > 0) {
         chart.timeScale().applyOptions({ barSpacing: BAR_SPACING })
@@ -135,6 +176,9 @@ export default function ChartContainer() {
           chart.timeScale().scrollToRealTime()
         }
       }
+    }
+    if (!ohlcHoveringRef.current) {
+      setOhlcLegend(candles.length ? candles[candles.length - 1] : null)
     }
     overlay.restoreOverlayAfterData({ focusView: resetView })
   }
@@ -145,6 +189,7 @@ export default function ChartContainer() {
 
     const keepAlert = overlay.captureKeepAlertForChartTypeSwitch()
     overlay.wipeOverlay()
+    // Price series only — volume histogram + SMA stay on pane 1.
     if (seriesRef.current) {
       chart.removeSeries(seriesRef.current)
     }
@@ -177,9 +222,17 @@ export default function ChartContainer() {
 
   // ── Init: watchlist → status → candles → chart + WS ──────────────────
   useEffect(() => {
+    // Per-effect cancel token — StrictMode remount must not resurrect an older init.
+    let cancelled = false
     disposedRef.current = false
     let resizeObserver = null
     let pollTimer = null
+    let localSocket = null
+    let localChart = null
+
+    function isStale() {
+      return cancelled || disposedRef.current
+    }
 
     async function init() {
       try {
@@ -188,7 +241,7 @@ export default function ChartContainer() {
           fetchMarketStatus(),
           fetchTimeframes(),
         ])
-        if (disposedRef.current) return
+        if (isStale()) return
 
         const supported = tfInfo.supported?.length ? tfInfo.supported : DEFAULT_TIMEFRAMES
         const initialTf = supported.includes(tfInfo.defaultTimeframe)
@@ -216,7 +269,7 @@ export default function ChartContainer() {
 
         let polls = 0
         while (
-          !disposedRef.current &&
+          !isStale() &&
           entries.length > 0 &&
           !entries.some((e) => normalizeStatus(e.bootstrapStatus) === 'READY') &&
           entries.some((e) => normalizeStatus(e.bootstrapStatus) === 'PENDING') &&
@@ -226,12 +279,14 @@ export default function ChartContainer() {
           await new Promise((r) => {
             pollTimer = setTimeout(r, 1000)
           })
-          if (disposedRef.current) return
+          if (isStale()) return
           try {
             entries = await fetchWatchlist()
+            if (isStale()) return
             setWatchlist(entries)
             watchlistRef.current = entries
             const st = await fetchMarketStatus()
+            if (isStale()) return
             marketPhaseRef.current = st.marketPhase?.toLowerCase() ?? marketPhaseRef.current
           } catch {
             // keep polling
@@ -239,7 +294,7 @@ export default function ChartContainer() {
           polls += 1
         }
 
-        if (disposedRef.current) return
+        if (isStale()) return
 
         const primary =
           entries.find((e) => normalizeStatus(e.bootstrapStatus) === 'READY') ||
@@ -274,10 +329,10 @@ export default function ChartContainer() {
         if (normalizeStatus(primary.bootstrapStatus) === 'READY') {
           try {
             const candles = await loadCandles(primary.symbolId, initialTf, generation)
-            if (disposedRef.current || candles === null) return
+            if (isStale() || candles === null) return
             applyInfoAfterLoad(candles)
           } catch (err) {
-            if (!disposedRef.current) {
+            if (!isStale()) {
               setError(err instanceof Error ? err.message : 'Failed to load candles')
             }
           }
@@ -286,25 +341,59 @@ export default function ChartContainer() {
           loadedSeriesKeyRef.current = seriesKey(primary.symbolId, initialTf)
         }
 
-        if (disposedRef.current) return
+        if (isStale()) return
+        if (!containerRef.current) return
 
         const chart = createChart(containerRef.current, defaultChartOptions())
+        localChart = chart
         chartRef.current = chart
         seriesRef.current = createPriceSeries(chart, chartTypeRef.current)
+        volumeSeriesRef.current = createVolumeSeries(chart)
+        volumeSmaSeriesRef.current = createVolumeSmaSeries(chart)
         applySeriesData(seriesRef.current, chartTypeRef.current)
+
+        const initialHeight = containerRef.current?.clientHeight ?? 0
+        applyVolumePaneHeight(chart, initialHeight)
+
+        chart.subscribeCrosshairMove((param) => {
+          if (isStale()) return
+          const leftChart =
+            param.point === undefined ||
+            param.time === undefined ||
+            param.point.x < 0 ||
+            param.point.y < 0
+          if (leftChart) {
+            ohlcHoveringRef.current = false
+            setOhlcLegend(latestCandleFromMap(candlesRef.current))
+            return
+          }
+          const candle = findCandleByChartTime(candlesRef.current, param.time)
+          if (candle) {
+            ohlcHoveringRef.current = true
+            setOhlcLegend(candle)
+          }
+        })
 
         resizeObserver = new ResizeObserver((entriesRo) => {
           const { width, height } = entriesRo[0].contentRect
           chart.applyOptions({ width, height })
+          applyVolumePaneHeight(chart, height)
         })
         resizeObserver.observe(containerRef.current)
 
-        socketRef.current = createLiveSocket({
+        localSocket = createLiveSocket({
           symbolId: primary.symbolId,
           timeframe: initialTf,
           onStatus: (wsStatus, message) => {
-            if (disposedRef.current) return
+            if (isStale()) return
             if (wsStatus === 'error' && message) {
+              // Control message after intentional watchlist remove — not a user-facing failure.
+              if (
+                typeof message === 'string' &&
+                message.toLowerCase().includes('symbol removed from watchlist')
+              ) {
+                return
+              }
               const active = watchlistRef.current.find(
                 (e) => e.symbolId === activeSymbolIdRef.current,
               )
@@ -315,6 +404,7 @@ export default function ChartContainer() {
             updateConnectionStatus(wsStatus, marketPhaseRef.current)
           },
           onMessage: (message) => {
+            if (isStale()) return
             if (message.type === 'market_status') {
               updateConnectionStatus(wsStatusRef.current, message.marketPhase)
               if (message.marketPhase === 'closed') {
@@ -341,6 +431,8 @@ export default function ChartContainer() {
                     ? toLinePoint(message.candle)
                     : toCandlestickPoint(message.candle),
                 )
+                updateVolumeLive(message.candle)
+                syncOhlcLegendFromLatest()
               } catch {
                 if (seriesRef.current) {
                   applySeriesData(seriesRef.current, chartTypeRef.current, {
@@ -351,11 +443,26 @@ export default function ChartContainer() {
             }
           },
         })
+        socketRef.current = localSocket
+
+        if (isStale()) {
+          localSocket.close()
+          localSocket = null
+          socketRef.current = null
+          resizeObserver?.disconnect()
+          chart.remove()
+          localChart = null
+          chartRef.current = null
+          seriesRef.current = null
+          volumeSeriesRef.current = null
+          volumeSmaSeriesRef.current = null
+          return
+        }
 
         updateConnectionStatus('connecting', marketPhaseRef.current)
         setLoading(false)
       } catch (err) {
-        if (!disposedRef.current) {
+        if (!isStale()) {
           setError(err instanceof Error ? err.message : 'Failed to load chart data')
           setLoading(false)
           updateConnectionStatus('error', marketPhaseRef.current)
@@ -366,15 +473,21 @@ export default function ChartContainer() {
     init()
 
     return () => {
+      cancelled = true
       disposedRef.current = true
       loadGenerationRef.current += 1
       if (pollTimer) clearTimeout(pollTimer)
+      localSocket?.close()
       socketRef.current?.close()
       socketRef.current = null
       resizeObserver?.disconnect()
+      localChart?.remove()
       chartRef.current?.remove()
       chartRef.current = null
       seriesRef.current = null
+      volumeSeriesRef.current = null
+      volumeSmaSeriesRef.current = null
+      ohlcHoveringRef.current = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only init
   }, [updateConnectionStatus, loadCandles])
@@ -503,6 +616,9 @@ export default function ChartContainer() {
     const generation = ++loadGenerationRef.current
     setSwitching(true)
     setError(null)
+    setInfoMessage(null)
+    ohlcHoveringRef.current = false
+    setOhlcLegend(null)
 
     const entry =
       entryHint ||
@@ -512,16 +628,17 @@ export default function ChartContainer() {
     setActiveSymbolId(nextSymbolId)
     activeSymbolIdRef.current = nextSymbolId
 
+    // Drop previous series immediately so header never shows another symbol's bars.
+    clearSeriesDataFor(nextSymbolId, timeframeRef.current)
+
     if (normalizeStatus(entry?.bootstrapStatus) === 'FAILED') {
       applyFailedBanner(entry)
-      clearSeriesDataFor(nextSymbolId, timeframeRef.current)
       socketRef.current?.subscribe(nextSymbolId, timeframeRef.current)
       if (generation === loadGenerationRef.current) setSwitching(false)
       return
     }
 
     if (normalizeStatus(entry?.bootstrapStatus) === 'PENDING') {
-      clearSeriesDataFor(nextSymbolId, timeframeRef.current)
       setInfoMessage('Loading market data…')
       socketRef.current?.subscribe(nextSymbolId, timeframeRef.current)
       if (generation === loadGenerationRef.current) setSwitching(false)
@@ -669,17 +786,18 @@ export default function ChartContainer() {
     const generation = ++loadGenerationRef.current
     setSwitching(true)
     setError(null)
+    setInfoMessage(null)
+    ohlcHoveringRef.current = false
+    setOhlcLegend(null)
     setActiveSymbolId(alert.symbolId)
     activeSymbolIdRef.current = alert.symbolId
     setTimeframe(alert.timeframe)
     timeframeRef.current = alert.timeframe
 
+    // Clear old series immediately (same as TF / symbol switch).
+    clearSeriesDataFor(alert.symbolId, alert.timeframe)
+
     if (normalizeStatus(entry.bootstrapStatus) === 'PENDING') {
-      candlesRef.current.clear()
-      loadedSeriesKeyRef.current = seriesKey(alert.symbolId, alert.timeframe)
-      if (seriesRef.current) {
-        applySeriesData(seriesRef.current, chartTypeRef.current)
-      }
       setInfoMessage('Loading market data…')
       socketRef.current?.subscribe(alert.symbolId, alert.timeframe)
       if (generation === loadGenerationRef.current) setSwitching(false)
@@ -817,6 +935,7 @@ export default function ChartContainer() {
                     : 'Loading candles…'}
             </div>
           )}
+          <OhlcLegend candle={ohlcLegend} />
           <div ref={containerRef} className="chart-container" />
         </div>
 

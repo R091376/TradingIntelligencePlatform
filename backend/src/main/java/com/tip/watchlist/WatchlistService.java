@@ -168,13 +168,13 @@ public class WatchlistService {
 
             WatchlistEntry entry = after.get();
 
-            // If unexpected throw path marked FAILED (or bootstrap returned READY/FAILED), subscribe.
+            // READY/FAILED: ensure streamer exists (connect if recovery never did) and keys are subscribed.
             SymbolBootstrapStatus status = entry.bootstrapStatus();
             if (status == SymbolBootstrapStatus.READY || status == SymbolBootstrapStatus.FAILED) {
                 try {
-                    marketDataProvider.subscribeInstruments(Set.of(symbolId));
+                    marketBootstrapService.ensureLiveFeedConnected();
                 } catch (Exception e) {
-                    log.warn("Failed to subscribe live feed for {}: {}", symbolId, e.getMessage());
+                    log.warn("Failed to ensure live feed after add for {}: {}", symbolId, e.getMessage());
                 }
             } else if (status == SymbolBootstrapStatus.PENDING) {
                 // Safety net: should not happen if bootstrap always writes READY/FAILED.

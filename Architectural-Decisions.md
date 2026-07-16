@@ -137,11 +137,12 @@ Decision IDs (`KD*`) match the multi-symbol design where applicable. Newer items
 
 | | |
 |---|---|
-| **Status** | Accepted (implemented 2026-07-10) |
-| **Decision** | Parse **both** `fullFeed.marketFF` (equities) and **`fullFeed.indexFF`** (indices) in `UpstoxFeedClient.extractTick`. Index volume = 0. |
+| **Status** | Accepted (implemented 2026-07-10; volume stance confirmed 2026-07-15) |
+| **Decision** | Parse **both** `fullFeed.marketFF` (equities) and **`fullFeed.indexFF`** (indices) in `UpstoxFeedClient.extractTick`. **Index volume stays 0** for product purposes (no futures proxy, no Nifty-50 constituent sum). |
 | **Rationale** | Upstox V3 proto uses a oneof; indices do **not** populate `marketFF`. Without `indexFF`, NIFTY never received live ticks after seed and appeared ~15 minutes “delayed” (frozen at last REST bar). **This was our bug, not an Upstox free-plan delay.** |
-| **Consequences** | Index charts update live like equities. Volume on index candles stays 0. Any future index instruments need the same path. |
-| **Code** | `backend/src/main/java/com/tip/market/UpstoxFeedClient.java` |
+| **Volume evidence (live)** | Index feed has **no equity `vtt`**. `indexFF.marketOHLC` may still arrive (e.g. `ohlcCount=2` with `1d` + `I1`) but **`vol` is 0** — observed for `NSE_INDEX\|Nifty 50`: `dayVol=0 i1Vol=0 source=I1 resolvedVtt=0`. Historical/intraday candle API also maps field index 5 as volume; for indices that field is typically **0**. We **do not invent** index volume from price. |
+| **Consequences** | Index **price** charts update live like equities. Volume histogram / OHLC legend **Vol** on indices remain 0 (expected). Pattern volume confirmation already treats unusable index volume as close-only fallback. Optional `IndexVolumeSupport` only passes through non-zero OHLC vols if Upstox ever fills them — not a synthetic volume product. Alternatives (futures proxy, sum of 50 equities) explicitly **out of scope**. |
+| **Code** | `UpstoxFeedClient.java`, `IndexVolumeSupport.java` (passthrough + first-tick INFO diagnostics) |
 
 ### KD12 — Sequential bootstrap (symbols × timeframes)
 
@@ -395,8 +396,8 @@ When older docs conflict, **this file + multi-symbol design rev 5 + Watchlist UX
 | **Upstox history ranges** | 15m ≤1 month/req; hours ≤1 quarter/req (AD6). |
 | **interval vs intervalMinutes** | SDK path uses unit+interval; engine uses minutes (AD7). |
 | **Health** | `GET /api/health` (not `/health`). |
-| **Index volume** | Always 0 on live index ticks — expected. |
-| **Validate index live** | NIFTY 1m lag should match equities (~current minute), not freeze after seed. |
+| **Index volume** | **Keep at 0** (product decision). Upstox index OHLC `vol` / candle field 5 are typically 0; do not invent volume. Futures proxy / constituent-sum = out of scope. |
+| **Validate index live** | NIFTY 1m lag should match equities (~current minute), not freeze after seed. First-tick log: `Index volume first tick: … dayVol= i1Vol= source= resolvedVtt=`. |
 | **Instrument search** | `GET /api/instruments/search`; POST add prefers `instrumentKey` from hit. |
 | **Watchlist UI** | Right sidebar list + combobox; header keeps TF + chart type only. |
 | **Port 8080** | Only one Spring Boot instance; second start fails with bind error. |
@@ -409,7 +410,7 @@ When older docs conflict, **this file + multi-symbol design rev 5 + Watchlist UX
 |---|---|
 | AD0 | Read-only platform, no execution |
 | AD1 | Spring Boot + React/Vite + Upstox Java SDK |
-| AD2 | Parse **indexFF** for live indices |
+| AD2 | Parse **indexFF** for live indices; **index volume stays 0** |
 | AD3 | Token via env (not committed) |
 | AD4 | Local CORS / Vite proxy |
 | AD5 | Per-TF historical lookback + chunked fetch |

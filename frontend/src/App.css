@@ -888,6 +888,58 @@
   border: 1px solid #1e2433;
 }
 
+/* TradingView-style OHLC strip over the price pane */
+.ohlc-legend {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px 14px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(15, 17, 23, 0.72);
+  backdrop-filter: blur(4px);
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  color: #94a3b8;
+}
+
+.ohlc-legend__field {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.ohlc-legend__label {
+  color: #64748b;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.ohlc-legend__value {
+  color: #e2e8f0;
+  font-weight: 500;
+}
+
+.ohlc-legend__field--emphasis .ohlc-legend__value {
+  font-weight: 700;
+}
+
+.ohlc-legend--up .ohlc-legend__field--emphasis .ohlc-legend__value,
+.ohlc-legend--up .ohlc-legend__field:last-child .ohlc-legend__value {
+  color: #4ade80;
+}
+
+.ohlc-legend--down .ohlc-legend__field--emphasis .ohlc-legend__value,
+.ohlc-legend--down .ohlc-legend__field:last-child .ohlc-legend__value {
+  color: #f87171;
+}
+
 .chart-loading {
   position: absolute;
   inset: 12px 12px 20px;
@@ -898,6 +950,6 @@
   background: rgba(15, 17, 23, 0.85);
   color: #94a3b8;
   font-size: 0.9375rem;
-  z-index: 1;
+  z-index: 3;
   pointer-events: none;
 }

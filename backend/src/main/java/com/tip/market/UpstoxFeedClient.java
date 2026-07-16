@@ -50,6 +50,8 @@ public class UpstoxFeedClient {
 
     private final Set<String> subscribedKeys = ConcurrentHashMap.newKeySet();
     private final AtomicLong tickCount = new AtomicLong();
+    /** Rebuilds session volume for indices (no equity VTT on indexFF). */
+    private final IndexVolumeSupport indexVolumeSupport = new IndexVolumeSupport();
 
     private final Object lock = new Object();
     private MarketDataStreamerV3 streamer;
@@ -97,6 +99,7 @@ public class UpstoxFeedClient {
 
             tickCount.set(0);
             marketInfoLogged = false;
+            indexVolumeSupport.clearAll();
             subscribedKeys.clear();
             subscribedKeys.addAll(instrumentKeys);
             createAndConnectStreamer();
@@ -135,12 +138,19 @@ public class UpstoxFeedClient {
             if (streamer != null) {
                 try {
                     streamer.unsubscribe(Set.copyOf(toRemove));
+                    for (String key : toRemove) {
+                        indexVolumeSupport.clear(key);
+                    }
                     log.info("Upstox live feed unsubscribed: {}", toRemove);
                 } catch (Exception e) {
                     // Roll back so local set still matches what we believe the SDK holds.
                     subscribedKeys.addAll(toRemove);
                     log.warn("Upstox unsubscribe failed for {} (local set restored): {}",
                             toRemove, e.toString());
+                }
+            } else {
+                for (String key : toRemove) {
+                    indexVolumeSupport.clear(key);
                 }
             }
         }
@@ -160,6 +170,7 @@ public class UpstoxFeedClient {
                 streamer = null;
             }
             subscribedKeys.clear();
+            indexVolumeSupport.clearAll();
             tickHandler = null;
             marketStatusService.setLiveFeedConnected(false);
         }
@@ -323,17 +334,31 @@ public class UpstoxFeedClient {
                         ltpc.getLtt()
                 );
             }
-            // Indices (NSE_INDEX|…): fullFeed.indexFF — no order-book / vtt (volume 0)
+            // Indices (NSE_INDEX|…): fullFeed.indexFF — no equity vtt; use marketOHLC vols
             if (feed.getFullFeed().getIndexFF() != null) {
                 MarketUpdateV3.IndexFullFeed indexFeed = feed.getFullFeed().getIndexFF();
                 MarketUpdateV3.LTPC ltpc = indexFeed.getLtpc();
                 if (ltpc == null) {
                     return null;
                 }
+                IndexVolumeSupport.ResolveResult vol =
+                        indexVolumeSupport.resolve(instrumentKey, indexFeed);
+                if (indexVolumeSupport.shouldLogFirstTick(instrumentKey)) {
+                    log.info(
+                            "Index volume first tick: {} ltp={} dayVol={} i1Vol={} i1Ts={} ohlcCount={} source={} resolvedVtt={}",
+                            instrumentKey,
+                            ltpc.getLtp(),
+                            vol.dayVol(),
+                            vol.i1Vol(),
+                            vol.i1TsMs(),
+                            vol.ohlcCount(),
+                            vol.source(),
+                            vol.volumeTradedToday());
+                }
                 return new Tick(
                         instrumentKey,
                         ltpc.getLtp(),
-                        0L,
+                        vol.volumeTradedToday(),
                         ltpc.getLtt()
                 );
             }

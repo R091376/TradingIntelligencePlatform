@@ -3,6 +3,12 @@ package com.tip.config;
 import com.tip.patterns.breakout.BreakoutConfig;
 import com.tip.patterns.breakdown.BreakdownConfig;
 import com.tip.patterns.model.ConfirmationMode;
+import com.tip.patterns.consolidation.ConsolidationConfig;
+import com.tip.patterns.engulfing.EngulfingConfig;
+import com.tip.patterns.insidebar.InsideBarConfig;
+import com.tip.patterns.pinbar.PinBarConfig;
+import com.tip.patterns.structure.StructureConfig;
+import com.tip.patterns.volumebreakout.VolumeBreakoutConfig;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.util.ArrayList;
@@ -18,6 +24,12 @@ public class PatternProperties {
     private int statsMinSampleSize = 20;
     private Breakout breakout = new Breakout();
     private Breakdown breakdown = new Breakdown();
+    private Pinbar pinbar = new Pinbar();
+    private Engulfing engulfing = new Engulfing();
+    private InsideBar insideBar = new InsideBar();
+    private Structure structure = new Structure();
+    private Consolidation consolidation = new Consolidation();
+    private VolumeBreakout volumeBreakout = new VolumeBreakout();
     private Expiry expiry = new Expiry();
     private Ws ws = new Ws();
 
@@ -59,6 +71,54 @@ public class PatternProperties {
 
     public void setBreakdown(Breakdown breakdown) {
         this.breakdown = breakdown != null ? breakdown : new Breakdown();
+    }
+
+    public Pinbar getPinbar() {
+        return pinbar;
+    }
+
+    public void setPinbar(Pinbar pinbar) {
+        this.pinbar = pinbar != null ? pinbar : new Pinbar();
+    }
+
+    public Engulfing getEngulfing() {
+        return engulfing;
+    }
+
+    public void setEngulfing(Engulfing engulfing) {
+        this.engulfing = engulfing != null ? engulfing : new Engulfing();
+    }
+
+    public InsideBar getInsideBar() {
+        return insideBar;
+    }
+
+    public void setInsideBar(InsideBar insideBar) {
+        this.insideBar = insideBar != null ? insideBar : new InsideBar();
+    }
+
+    public Structure getStructure() {
+        return structure;
+    }
+
+    public void setStructure(Structure structure) {
+        this.structure = structure != null ? structure : new Structure();
+    }
+
+    public Consolidation getConsolidation() {
+        return consolidation;
+    }
+
+    public void setConsolidation(Consolidation consolidation) {
+        this.consolidation = consolidation != null ? consolidation : new Consolidation();
+    }
+
+    public VolumeBreakout getVolumeBreakout() {
+        return volumeBreakout;
+    }
+
+    public void setVolumeBreakout(VolumeBreakout volumeBreakout) {
+        this.volumeBreakout = volumeBreakout != null ? volumeBreakout : new VolumeBreakout();
     }
 
     public Expiry getExpiry() {
@@ -104,6 +164,75 @@ public class PatternProperties {
                 breakdown.successRr,
                 breakdown.successAtrMultWithoutRetest,
                 breakdown.detectorVersion
+        );
+    }
+
+    public PinBarConfig toPinBarConfig() {
+        return new PinBarConfig(
+                atrPeriod,
+                pinbar.shadowBodyMult,
+                pinbar.maxBodyRangeRatio,
+                pinbar.maxOppositeWickRangeRatio,
+                pinbar.minRangeAtrMult,
+                pinbar.successAtrMult,
+                pinbar.requireTrendContext,
+                pinbar.trendLookback,
+                pinbar.maxCandlesAfterDetect,
+                pinbar.detectorVersion
+        );
+    }
+
+    public EngulfingConfig toEngulfingConfig() {
+        return new EngulfingConfig(
+                atrPeriod,
+                engulfing.minRangeAtrMult,
+                engulfing.successAtrMult,
+                engulfing.maxCandlesAfterDetect,
+                engulfing.detectorVersion
+        );
+    }
+
+    public InsideBarConfig toInsideBarConfig() {
+        return new InsideBarConfig(
+                atrPeriod,
+                insideBar.minMotherRangeAtrMult,
+                insideBar.successAtrMult,
+                insideBar.maxCandlesAfterDetect,
+                insideBar.maxBarsAfterInside,
+                insideBar.detectorVersion
+        );
+    }
+
+    public StructureConfig toStructureConfig() {
+        return new StructureConfig(
+                atrPeriod,
+                structure.fractalWidth,
+                structure.successAtrMult,
+                structure.maxCandlesAfterDetect,
+                structure.detectorVersion
+        );
+    }
+
+    public ConsolidationConfig toConsolidationConfig() {
+        return new ConsolidationConfig(
+                atrPeriod,
+                consolidation.windowCandles,
+                consolidation.rangeAtrMult,
+                consolidation.maxDurationCandles,
+                consolidation.tightenRatio,
+                consolidation.detectorVersion
+        );
+    }
+
+    public VolumeBreakoutConfig toVolumeBreakoutConfig() {
+        return new VolumeBreakoutConfig(
+                atrPeriod,
+                volumeBreakout.volumeAvgPeriod,
+                volumeBreakout.volumeMultiplier,
+                volumeBreakout.minRangeAtrMult,
+                volumeBreakout.successAtrMult,
+                volumeBreakout.maxCandlesAfterDetect,
+                volumeBreakout.detectorVersion
         );
     }
 
@@ -305,6 +434,322 @@ public class PatternProperties {
 
         public void setSuccessAtrMultWithoutRetest(double successAtrMultWithoutRetest) {
             this.successAtrMultWithoutRetest = successAtrMultWithoutRetest;
+        }
+
+        public String getDetectorVersion() {
+            return detectorVersion;
+        }
+
+        public void setDetectorVersion(String detectorVersion) {
+            this.detectorVersion = detectorVersion;
+        }
+    }
+
+    /** Hammer / Shooting Star (shared pin-bar geometry). */
+    public static class Pinbar {
+        private double shadowBodyMult = 2.0;
+        private double maxBodyRangeRatio = 0.35;
+        private double maxOppositeWickRangeRatio = 0.25;
+        private double minRangeAtrMult = 0.5;
+        private double successAtrMult = 1.5;
+        private boolean requireTrendContext = true;
+        private int trendLookback = 10;
+        private int maxCandlesAfterDetect = 20;
+        private String detectorVersion = "pinbar-v1";
+
+        public double getShadowBodyMult() {
+            return shadowBodyMult;
+        }
+
+        public void setShadowBodyMult(double shadowBodyMult) {
+            this.shadowBodyMult = shadowBodyMult;
+        }
+
+        public double getMaxBodyRangeRatio() {
+            return maxBodyRangeRatio;
+        }
+
+        public void setMaxBodyRangeRatio(double maxBodyRangeRatio) {
+            this.maxBodyRangeRatio = maxBodyRangeRatio;
+        }
+
+        public double getMaxOppositeWickRangeRatio() {
+            return maxOppositeWickRangeRatio;
+        }
+
+        public void setMaxOppositeWickRangeRatio(double maxOppositeWickRangeRatio) {
+            this.maxOppositeWickRangeRatio = maxOppositeWickRangeRatio;
+        }
+
+        public double getMinRangeAtrMult() {
+            return minRangeAtrMult;
+        }
+
+        public void setMinRangeAtrMult(double minRangeAtrMult) {
+            this.minRangeAtrMult = minRangeAtrMult;
+        }
+
+        public double getSuccessAtrMult() {
+            return successAtrMult;
+        }
+
+        public void setSuccessAtrMult(double successAtrMult) {
+            this.successAtrMult = successAtrMult;
+        }
+
+        public boolean isRequireTrendContext() {
+            return requireTrendContext;
+        }
+
+        public void setRequireTrendContext(boolean requireTrendContext) {
+            this.requireTrendContext = requireTrendContext;
+        }
+
+        public int getTrendLookback() {
+            return trendLookback;
+        }
+
+        public void setTrendLookback(int trendLookback) {
+            this.trendLookback = trendLookback;
+        }
+
+        public int getMaxCandlesAfterDetect() {
+            return maxCandlesAfterDetect;
+        }
+
+        public void setMaxCandlesAfterDetect(int maxCandlesAfterDetect) {
+            this.maxCandlesAfterDetect = maxCandlesAfterDetect;
+        }
+
+        public String getDetectorVersion() {
+            return detectorVersion;
+        }
+
+        public void setDetectorVersion(String detectorVersion) {
+            this.detectorVersion = detectorVersion;
+        }
+    }
+
+    public static class Engulfing {
+        private double minRangeAtrMult = 0.5;
+        private double successAtrMult = 1.5;
+        private int maxCandlesAfterDetect = 20;
+        private String detectorVersion = "engulfing-v1";
+
+        public double getMinRangeAtrMult() {
+            return minRangeAtrMult;
+        }
+
+        public void setMinRangeAtrMult(double minRangeAtrMult) {
+            this.minRangeAtrMult = minRangeAtrMult;
+        }
+
+        public double getSuccessAtrMult() {
+            return successAtrMult;
+        }
+
+        public void setSuccessAtrMult(double successAtrMult) {
+            this.successAtrMult = successAtrMult;
+        }
+
+        public int getMaxCandlesAfterDetect() {
+            return maxCandlesAfterDetect;
+        }
+
+        public void setMaxCandlesAfterDetect(int maxCandlesAfterDetect) {
+            this.maxCandlesAfterDetect = maxCandlesAfterDetect;
+        }
+
+        public String getDetectorVersion() {
+            return detectorVersion;
+        }
+
+        public void setDetectorVersion(String detectorVersion) {
+            this.detectorVersion = detectorVersion;
+        }
+    }
+
+    public static class InsideBar {
+        private double minMotherRangeAtrMult = 0.5;
+        private double successAtrMult = 1.5;
+        private int maxCandlesAfterDetect = 20;
+        private int maxBarsAfterInside = 5;
+        private String detectorVersion = "inside-bar-v1";
+
+        public double getMinMotherRangeAtrMult() {
+            return minMotherRangeAtrMult;
+        }
+
+        public void setMinMotherRangeAtrMult(double minMotherRangeAtrMult) {
+            this.minMotherRangeAtrMult = minMotherRangeAtrMult;
+        }
+
+        public double getSuccessAtrMult() {
+            return successAtrMult;
+        }
+
+        public void setSuccessAtrMult(double successAtrMult) {
+            this.successAtrMult = successAtrMult;
+        }
+
+        public int getMaxCandlesAfterDetect() {
+            return maxCandlesAfterDetect;
+        }
+
+        public void setMaxCandlesAfterDetect(int maxCandlesAfterDetect) {
+            this.maxCandlesAfterDetect = maxCandlesAfterDetect;
+        }
+
+        public int getMaxBarsAfterInside() {
+            return maxBarsAfterInside;
+        }
+
+        public void setMaxBarsAfterInside(int maxBarsAfterInside) {
+            this.maxBarsAfterInside = maxBarsAfterInside;
+        }
+
+        public String getDetectorVersion() {
+            return detectorVersion;
+        }
+
+        public void setDetectorVersion(String detectorVersion) {
+            this.detectorVersion = detectorVersion;
+        }
+    }
+
+    public static class Structure {
+        private int fractalWidth = 2;
+        private double successAtrMult = 1.5;
+        private int maxCandlesAfterDetect = 30;
+        private String detectorVersion = "structure-v1";
+
+        public int getFractalWidth() {
+            return fractalWidth;
+        }
+
+        public void setFractalWidth(int fractalWidth) {
+            this.fractalWidth = fractalWidth;
+        }
+
+        public double getSuccessAtrMult() {
+            return successAtrMult;
+        }
+
+        public void setSuccessAtrMult(double successAtrMult) {
+            this.successAtrMult = successAtrMult;
+        }
+
+        public int getMaxCandlesAfterDetect() {
+            return maxCandlesAfterDetect;
+        }
+
+        public void setMaxCandlesAfterDetect(int maxCandlesAfterDetect) {
+            this.maxCandlesAfterDetect = maxCandlesAfterDetect;
+        }
+
+        public String getDetectorVersion() {
+            return detectorVersion;
+        }
+
+        public void setDetectorVersion(String detectorVersion) {
+            this.detectorVersion = detectorVersion;
+        }
+    }
+
+    public static class Consolidation {
+        private int windowCandles = 10;
+        private double rangeAtrMult = 1.5;
+        private int maxDurationCandles = 30;
+        private double tightenRatio = 0.85;
+        private String detectorVersion = "consolidation-v1";
+
+        public int getWindowCandles() {
+            return windowCandles;
+        }
+
+        public void setWindowCandles(int windowCandles) {
+            this.windowCandles = windowCandles;
+        }
+
+        public double getRangeAtrMult() {
+            return rangeAtrMult;
+        }
+
+        public void setRangeAtrMult(double rangeAtrMult) {
+            this.rangeAtrMult = rangeAtrMult;
+        }
+
+        public int getMaxDurationCandles() {
+            return maxDurationCandles;
+        }
+
+        public void setMaxDurationCandles(int maxDurationCandles) {
+            this.maxDurationCandles = maxDurationCandles;
+        }
+
+        public double getTightenRatio() {
+            return tightenRatio;
+        }
+
+        public void setTightenRatio(double tightenRatio) {
+            this.tightenRatio = tightenRatio;
+        }
+
+        public String getDetectorVersion() {
+            return detectorVersion;
+        }
+
+        public void setDetectorVersion(String detectorVersion) {
+            this.detectorVersion = detectorVersion;
+        }
+    }
+
+    public static class VolumeBreakout {
+        private int volumeAvgPeriod = 20;
+        private double volumeMultiplier = 2.0;
+        private double minRangeAtrMult = 0.5;
+        private double successAtrMult = 1.5;
+        private int maxCandlesAfterDetect = 20;
+        private String detectorVersion = "volume-breakout-v1";
+
+        public int getVolumeAvgPeriod() {
+            return volumeAvgPeriod;
+        }
+
+        public void setVolumeAvgPeriod(int volumeAvgPeriod) {
+            this.volumeAvgPeriod = volumeAvgPeriod;
+        }
+
+        public double getVolumeMultiplier() {
+            return volumeMultiplier;
+        }
+
+        public void setVolumeMultiplier(double volumeMultiplier) {
+            this.volumeMultiplier = volumeMultiplier;
+        }
+
+        public double getMinRangeAtrMult() {
+            return minRangeAtrMult;
+        }
+
+        public void setMinRangeAtrMult(double minRangeAtrMult) {
+            this.minRangeAtrMult = minRangeAtrMult;
+        }
+
+        public double getSuccessAtrMult() {
+            return successAtrMult;
+        }
+
+        public void setSuccessAtrMult(double successAtrMult) {
+            this.successAtrMult = successAtrMult;
+        }
+
+        public int getMaxCandlesAfterDetect() {
+            return maxCandlesAfterDetect;
+        }
+
+        public void setMaxCandlesAfterDetect(int maxCandlesAfterDetect) {
+            this.maxCandlesAfterDetect = maxCandlesAfterDetect;
         }
 
         public String getDetectorVersion() {

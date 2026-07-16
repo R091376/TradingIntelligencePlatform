@@ -105,7 +105,7 @@ class WatchlistServiceTest {
         assertThat(saveCaptor.getValue().bootstrapStatus()).isEqualTo(SymbolBootstrapStatus.PENDING);
 
         verify(marketBootstrapService).bootstrapSymbol(any(WatchlistEntry.class));
-        verify(marketDataProvider).subscribeInstruments(eq(Set.of(resolved.instrumentKey())));
+        verify(marketBootstrapService).ensureLiveFeedConnected();
     }
 
     @Test
@@ -180,7 +180,7 @@ class WatchlistServiceTest {
         verify(watchlistRepository, org.mockito.Mockito.atLeast(2)).save(saves.capture());
         assertThat(saves.getAllValues().stream()
                 .anyMatch(e -> e.bootstrapStatus() == SymbolBootstrapStatus.FAILED)).isTrue();
-        verify(marketDataProvider).subscribeInstruments(eq(Set.of(resolved.instrumentKey())));
+        verify(marketBootstrapService).ensureLiveFeedConnected();
     }
 
     @Test

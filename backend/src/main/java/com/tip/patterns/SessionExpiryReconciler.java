@@ -11,6 +11,8 @@ import com.tip.patterns.model.PatternStageEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -22,6 +24,7 @@ import java.util.Map;
 /**
  * Session-close expiry for short intraday TFs; session counters for 1h/4h multi-day setups.
  * Uses {@link PatternSeriesGate} so expiry never races candle evaluation on the same series.
+ * Runs after {@link com.tip.market.CandleCloseReconciler} so the last session bar is closed first.
  */
 @Component
 public class SessionExpiryReconciler {
@@ -54,6 +57,7 @@ public class SessionExpiryReconciler {
         this.seriesGate = seriesGate;
     }
 
+    @Order(Ordered.LOWEST_PRECEDENCE)
     @EventListener
     public void onPhaseChanged(MarketPhaseChangedEvent event) {
         if (!featureGuard.isFullyEnabled()) {
