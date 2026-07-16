@@ -12,7 +12,6 @@ import {
 import { addSymbol, fetchWatchlist, removeSymbol } from '../services/watchlistApi'
 import { createLiveSocket } from '../services/liveSocket'
 import {
-  BAR_SPACING,
   applyVolumePaneHeight,
   buildSymbolLabels,
   createPriceSeries,
@@ -23,9 +22,13 @@ import {
   findCandleByChartTime,
   lastVolumeSmaPoint,
   latestCandleFromMap,
-  mapSeriesData,
-  mapVolumeData,
-  mapVolumeSmaData,
+  sanitizeSeriesPoints,
+  sanitizeVolumePoints,
+  sanitizeVolumeSmaPoints,
+  rebalancePriceVolumePanes,
+  applyBarSpacing,
+  VOLUME_SMA_LABEL,
+  VOLUME_SMA_COLOR,
   MARKET_CLOSED_MSG,
   normalizeStatus,
   resolveDisplayStatus,
@@ -126,9 +129,14 @@ export default function ChartContainer() {
   }
 
   function applyInfoAfterLoad(candles) {
+    const empty = !candles || candles.length === 0
     if (marketPhaseRef.current === 'closed') {
-      setInfoMessage(MARKET_CLOSED_MSG)
-    } else if (!candles || candles.length === 0) {
+      setInfoMessage(
+        empty
+          ? 'Market is closed and no candle history is loaded. Restart the backend or wait for seed recovery.'
+          : MARKET_CLOSED_MSG,
+      )
+    } else if (empty) {
       setInfoMessage('No candle data available yet.')
     } else {
       setInfoMessage(null)
@@ -136,8 +144,12 @@ export default function ChartContainer() {
   }
 
   function applyVolumeSeriesData(candles) {
-    volumeSeriesRef.current?.setData(mapVolumeData(candles))
-    volumeSmaSeriesRef.current?.setData(mapVolumeSmaData(candles))
+    try {
+      volumeSeriesRef.current?.setData(sanitizeVolumePoints(candles))
+      volumeSmaSeriesRef.current?.setData(sanitizeVolumeSmaPoints(candles))
+    } catch {
+      // LWC can throw on empty/degenerate volume scales; ignore and keep price
+    }
   }
 
   function syncOhlcLegendFromLatest() {
@@ -160,25 +172,75 @@ export default function ChartContainer() {
   /**
    * Bulk-load series data; re-attach pattern overlay when data is ready.
    */
-  function applySeriesData(series, type, { resetView = true } = {}) {
+  function applySeriesData(series, type, { resetView = true, preserveLogicalRange = null } = {}) {
     const candles = sortedCandlesFromMap(candlesRef.current)
     overlay.wipeOverlay()
-    series.setData(mapSeriesData(type, candles))
+    const pricePoints = sanitizeSeriesPoints(type, candles)
+    try {
+      series.setData(pricePoints)
+    } catch (err) {
+      console.warn('Price series setData failed', err)
+      try {
+        series.setData([])
+      } catch {
+        // ignore
+      }
+    }
     applyVolumeSeriesData(candles)
+
+    const chart = chartRef.current
+    const h = containerRef.current?.clientHeight ?? 0
+    // Always re-pin volume after any bulk data change (type switch can collapse panes).
+    rebalancePriceVolumePanes(
+      chart,
+      series,
+      volumeSeriesRef.current,
+      volumeSmaSeriesRef.current,
+      h,
+    )
 
     const restoring = overlay.willRestoreForCurrentSeries()
 
     if (resetView) {
       ohlcHoveringRef.current = false
-      series.priceScale().applyOptions({ autoScale: true })
-      volumeSeriesRef.current?.priceScale().applyOptions({ autoScale: true })
-      const chart = chartRef.current
-      if (chart && candles.length > 0) {
-        chart.timeScale().applyOptions({ barSpacing: BAR_SPACING })
-        if (!restoring) {
-          chart.timeScale().scrollToRealTime()
-        }
+      try {
+        series.priceScale().applyOptions({ autoScale: true })
+        volumeSeriesRef.current?.priceScale().applyOptions({ autoScale: true })
+      } catch {
+        // ignore
       }
+      if (chart && pricePoints.length > 0) {
+        applyBarSpacing(chart)
+        if (preserveLogicalRange) {
+          try {
+            chart.timeScale().setVisibleLogicalRange(preserveLogicalRange)
+          } catch {
+            try {
+              chart.timeScale().scrollToRealTime()
+            } catch {
+              // ignore
+            }
+          }
+        } else if (!restoring) {
+          // Keep fixed bar width — fitContent() on multi-day history makes bars tiny.
+          try {
+            chart.timeScale().scrollToRealTime()
+          } catch {
+            // ignore
+          }
+        }
+        // Enforce spacing again after scroll (LWC may recompute range).
+        applyBarSpacing(chart)
+      }
+      rebalancePriceVolumePanes(
+        chart,
+        series,
+        volumeSeriesRef.current,
+        volumeSmaSeriesRef.current,
+        h,
+      )
+    } else {
+      applyBarSpacing(chart)
     }
     if (!ohlcHoveringRef.current) {
       setOhlcLegend(candles.length ? candles[candles.length - 1] : null)
@@ -190,11 +252,23 @@ export default function ChartContainer() {
     const chart = chartRef.current
     if (!chart) return
 
+    // Preserve zoom/scroll so candle↔line does not shrink bar width.
+    let logicalRange = null
+    try {
+      logicalRange = chart.timeScale().getVisibleLogicalRange()
+    } catch {
+      logicalRange = null
+    }
+
     const keepAlert = overlay.captureKeepAlertForChartTypeSwitch()
     overlay.wipeOverlay()
-    // Price series only — volume histogram + SMA stay on pane 1.
+    // Price series only — volume histogram + SMA are re-pinned to pane 1 below.
     if (seriesRef.current) {
-      chart.removeSeries(seriesRef.current)
+      try {
+        chart.removeSeries(seriesRef.current)
+      } catch {
+        // ignore
+      }
     }
 
     const series = createPriceSeries(chart, type)
@@ -202,7 +276,23 @@ export default function ChartContainer() {
     if (keepAlert) {
       overlay.setPendingAlert(keepAlert)
     }
-    applySeriesData(series, type)
+    applySeriesData(series, type, {
+      resetView: true,
+      preserveLogicalRange: logicalRange,
+    })
+    // Second pass after LWC layout settles (line series can reflow panes once).
+    requestAnimationFrame(() => {
+      const c = chartRef.current
+      const h = containerRef.current?.clientHeight ?? 0
+      rebalancePriceVolumePanes(
+        c,
+        seriesRef.current,
+        volumeSeriesRef.current,
+        volumeSmaSeriesRef.current,
+        h,
+      )
+      applyBarSpacing(c)
+    })
   }
 
   const loadCandles = useCallback(async (symbolId, tf, generation) => {
@@ -995,6 +1085,11 @@ export default function ChartContainer() {
             </div>
           )}
           <OhlcLegend candle={ohlcLegend} />
+          {/* Labels the blue line on the volume pane (volume simple moving average). */}
+          <div className="volume-pane-legend" title="Simple moving average of volume over the last 20 bars">
+            <span className="volume-pane-legend__swatch" style={{ background: VOLUME_SMA_COLOR }} />
+            <span className="volume-pane-legend__text">{VOLUME_SMA_LABEL}</span>
+          </div>
           <div ref={containerRef} className="chart-container" />
         </div>
 

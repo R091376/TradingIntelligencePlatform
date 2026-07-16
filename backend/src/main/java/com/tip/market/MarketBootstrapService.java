@@ -206,6 +206,11 @@ public class MarketBootstrapService {
         log.info("Connecting/ensuring live feed for {} instrument key(s)", keys.size());
         List<String> timeframes = marketProperties.supportedTimeframes();
         marketDataProvider.connectLiveFeed(keys, tick -> {
+            // After cash session close (or pre-open), do not open new live bars from residual ticks.
+            // Seeded history must remain the chart source of truth for "last available" data.
+            if (marketStatusService.getMarketPhase() != MarketPhase.OPEN) {
+                return;
+            }
             for (String timeframe : timeframes) {
                 try {
                     candleEngine.processTick(tick, timeframe);

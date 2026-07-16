@@ -9,6 +9,8 @@ const nsePartsFormatter = new Intl.DateTimeFormat('en-US', {
   minute: '2-digit',
   second: '2-digit',
   hour12: false,
+  // Prefer h23 so midnight is "00" not "24" (24 breaks Date.UTC ordering).
+  hourCycle: 'h23',
 })
 
 function partValue(parts, type) {
@@ -25,13 +27,19 @@ function partValue(parts, type) {
  * @see https://tradingview.github.io/lightweight-charts/docs/time-zones
  */
 export function utcToNseChartTime(utcSeconds) {
-  const parts = nsePartsFormatter.formatToParts(new Date(utcSeconds * 1000))
+  const sec = Number(utcSeconds)
+  if (!Number.isFinite(sec)) return 0
+  const parts = nsePartsFormatter.formatToParts(new Date(sec * 1000))
+  let hour = partValue(parts, 'hour')
+  // Some engines still emit 24 for midnight; roll to 0 without advancing the day
+  // incorrectly (Date.UTC(y,m,d,24) would move to the next day).
+  if (hour >= 24) hour = 0
   return Math.floor(
     Date.UTC(
       partValue(parts, 'year'),
       partValue(parts, 'month') - 1,
       partValue(parts, 'day'),
-      partValue(parts, 'hour'),
+      hour,
       partValue(parts, 'minute'),
       partValue(parts, 'second'),
     ) / 1000,

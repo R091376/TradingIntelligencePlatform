@@ -331,7 +331,7 @@ public class UpstoxFeedClient {
                         instrumentKey,
                         ltpc.getLtp(),
                         marketFeed.getVtt(),
-                        ltpc.getLtt()
+                        IndexVolumeSupport.normalizeTsMs(ltpc.getLtt())
                 );
             }
             // Indices (NSE_INDEX|…): fullFeed.indexFF — no equity vtt; use marketOHLC vols
@@ -359,7 +359,7 @@ public class UpstoxFeedClient {
                         instrumentKey,
                         ltpc.getLtp(),
                         vol.volumeTradedToday(),
-                        ltpc.getLtt()
+                        IndexVolumeSupport.normalizeTsMs(ltpc.getLtt())
                 );
             }
         }
@@ -374,7 +374,7 @@ public class UpstoxFeedClient {
                     instrumentKey,
                     ltpc.getLtp(),
                     greeksFeed.getVtt(),
-                    ltpc.getLtt()
+                    IndexVolumeSupport.normalizeTsMs(ltpc.getLtt())
             );
         }
 
@@ -384,7 +384,7 @@ public class UpstoxFeedClient {
                     instrumentKey,
                     ltpc.getLtp(),
                     0L,
-                    ltpc.getLtt()
+                    IndexVolumeSupport.normalizeTsMs(ltpc.getLtt())
             );
         }
 

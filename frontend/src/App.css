@@ -1123,6 +1123,39 @@
   border: 1px solid #1e2433;
 }
 
+/* Top of locked volume pane: chart-panel bottom pad (20px) + max vol height (96px) − inset */
+.volume-pane-legend {
+  position: absolute;
+  left: 20px;
+  /* Sit just under the price/volume splitter (top of volume band). */
+  bottom: calc(20px + 96px - 8px);
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(15, 17, 23, 0.78);
+  backdrop-filter: blur(4px);
+  pointer-events: none;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: #cbd5e1;
+  letter-spacing: 0.02em;
+}
+
+.volume-pane-legend__swatch {
+  width: 14px;
+  height: 2px;
+  border-radius: 1px;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.25);
+}
+
+.volume-pane-legend__text {
+  color: #93c5fd;
+}
+
 /* TradingView-style OHLC strip over the price pane */
 .ohlc-legend {
   position: absolute;

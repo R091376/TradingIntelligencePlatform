@@ -9,15 +9,21 @@ import { utcToNseChartTime } from '../utils/chartTime'
 /** Candle/bar width in px (LWC default ~6). Applied on create and after symbol/TF load. */
 export const BAR_SPACING = 7
 
-/** Volume subplot ~22% of chart height (TradingView-style). */
-export const VOLUME_PANE_HEIGHT_RATIO = 0.22
+/** Target volume subplot share of chart height (capped by max px). */
+export const VOLUME_PANE_HEIGHT_RATIO = 0.18
+/** Hard ceiling so volume never steals the price pane (line/candle switch included). */
+export const VOLUME_PANE_MAX_PX = 96
+export const VOLUME_PANE_MIN_PX = 52
 
 /** Matches backend breakout volume baseline (docs/indicators/volume-sma-20.md). */
 export const VOLUME_SMA_PERIOD = 20
 
 const VOLUME_UP_COLOR = 'rgba(34, 197, 94, 0.5)'
 const VOLUME_DOWN_COLOR = 'rgba(239, 68, 68, 0.5)'
-const VOLUME_SMA_COLOR = '#60a5fa'
+/** Blue line on the volume pane: simple moving average of volume. */
+export const VOLUME_SMA_COLOR = '#60a5fa'
+/** Human-readable label for the volume SMA series. */
+export const VOLUME_SMA_LABEL = `Vol SMA ${VOLUME_SMA_PERIOD}`
 
 export const MARKET_CLOSED_MSG = 'Market is closed. Showing last available candle data.'
 
@@ -171,13 +177,57 @@ export function createPriceSeries(chart, type) {
  * @param {import('lightweight-charts').ISeriesApi} series
  * @param {number} paneIndex
  */
-function ensureSeriesPane(series, paneIndex) {
+export function ensureSeriesPane(series, paneIndex) {
   if (!series || typeof series.moveToPane !== 'function') return
   try {
     if (typeof series.paneIndex === 'function' && series.paneIndex() === paneIndex) {
       return
     }
     series.moveToPane(paneIndex)
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * After price series remove/recreate (e.g. candle↔line), LWC can collapse panes and
+ * leave volume on pane 0. Re-pin volume series and restore heights.
+ */
+export function rebalancePriceVolumePanes(
+  chart,
+  priceSeries,
+  volumeSeries,
+  volumeSmaSeries,
+  containerHeight,
+) {
+  if (!chart) return
+  ensureSeriesPane(priceSeries, 0)
+  ensureSeriesPane(volumeSeries, 1)
+  ensureSeriesPane(volumeSmaSeries, 1)
+  try {
+    priceSeries?.priceScale()?.applyOptions({
+      scaleMargins: { top: 0.08, bottom: 0.05 },
+      borderColor: '#2a3144',
+    })
+    volumeSeries?.priceScale()?.applyOptions({
+      scaleMargins: { top: 0.12, bottom: 0 },
+      borderColor: '#2a3144',
+    })
+  } catch {
+    // ignore
+  }
+  applyVolumePaneHeight(chart, containerHeight)
+}
+
+/** Keep bar width stable after setData / fitContent / series swaps. */
+export function applyBarSpacing(chart) {
+  if (!chart) return
+  try {
+    chart.timeScale().applyOptions({
+      barSpacing: BAR_SPACING,
+      minBarSpacing: 2,
+      rightOffset: 4,
+    })
   } catch {
     // ignore
   }
@@ -229,7 +279,20 @@ export function createVolumeSmaSeries(chart) {
 }
 
 /**
- * Size the volume pane relative to the chart container height.
+ * Locked volume pane height in px (ratio target, hard max/min).
+ * @param {number} containerHeight
+ */
+export function volumePaneHeightPx(containerHeight) {
+  if (!(containerHeight > 0)) return VOLUME_PANE_MAX_PX
+  const fromRatio = Math.round(containerHeight * VOLUME_PANE_HEIGHT_RATIO)
+  // Absolute max + never more than 22% of container.
+  const hardMax = Math.min(VOLUME_PANE_MAX_PX, Math.floor(containerHeight * 0.22))
+  return Math.min(hardMax, Math.max(VOLUME_PANE_MIN_PX, fromRatio))
+}
+
+/**
+ * Size price + volume panes so volume cannot swallow the main chart.
+ * Locks volume height (px + stretch factor) so candle↔line does not move the splitter.
  * @param {import('lightweight-charts').IChartApi} chart
  * @param {number} containerHeight
  */
@@ -238,11 +301,63 @@ export function applyVolumePaneHeight(chart, containerHeight) {
   try {
     const panes = chart.panes()
     if (!panes || panes.length < 2) return
-    const volHeight = Math.max(56, Math.round(containerHeight * VOLUME_PANE_HEIGHT_RATIO))
+    const volHeight = volumePaneHeightPx(containerHeight)
+    const priceHeight = Math.max(160, containerHeight - volHeight)
+    panes[0].setHeight(priceHeight)
     panes[1].setHeight(volHeight)
+    // Stretch factors keep the splitter stable when series types change.
+    if (typeof panes[0].setStretchFactor === 'function') {
+      panes[0].setStretchFactor(5)
+      panes[1].setStretchFactor(1)
+    }
   } catch {
     // panes API may throw if chart is mid-dispose
   }
+}
+
+/**
+ * Map candles for LWC: sort by chart time, drop invalid OHLC, dedupe times.
+ * Prevents setData() from failing / blank price pane after bad live bars.
+ */
+export function sanitizeSeriesPoints(type, candles) {
+  const raw = mapSeriesData(type, candles || [])
+  const byTime = new Map()
+  for (const p of raw) {
+    if (p == null || p.time == null || !Number.isFinite(Number(p.time))) continue
+    if (type === 'line') {
+      if (!Number.isFinite(Number(p.value))) continue
+    } else {
+      const o = Number(p.open)
+      const h = Number(p.high)
+      const l = Number(p.low)
+      const c = Number(p.close)
+      if (![o, h, l, c].every(Number.isFinite)) continue
+    }
+    byTime.set(p.time, p)
+  }
+  return Array.from(byTime.values()).sort((a, b) => a.time - b.time)
+}
+
+export function sanitizeVolumePoints(candles) {
+  const raw = mapVolumeData(candles || [])
+  const byTime = new Map()
+  for (const p of raw) {
+    if (p == null || p.time == null || !Number.isFinite(Number(p.time))) continue
+    const v = Number(p.value)
+    byTime.set(p.time, { ...p, value: Number.isFinite(v) ? Math.max(0, v) : 0 })
+  }
+  return Array.from(byTime.values()).sort((a, b) => a.time - b.time)
+}
+
+export function sanitizeVolumeSmaPoints(candles) {
+  const raw = mapVolumeSmaData(candles || [])
+  const byTime = new Map()
+  for (const p of raw) {
+    if (p == null || p.time == null || !Number.isFinite(Number(p.time))) continue
+    if (!Number.isFinite(Number(p.value))) continue
+    byTime.set(p.time, p)
+  }
+  return Array.from(byTime.values()).sort((a, b) => a.time - b.time)
 }
 
 export function defaultChartOptions() {
