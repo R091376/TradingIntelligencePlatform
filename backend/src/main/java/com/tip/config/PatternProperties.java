@@ -12,8 +12,10 @@ import com.tip.patterns.volumebreakout.VolumeBreakoutConfig;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 @ConfigurationProperties(prefix = "tip.pattern")
@@ -22,6 +24,11 @@ public class PatternProperties {
     private boolean enabled = true;
     private int atrPeriod = 14;
     private int statsMinSampleSize = 20;
+    /**
+     * Per-timeframe gate for closed-bar pattern evaluation (detect + lifecycle).
+     * Omitted keys default to {@code true}. {@code 1m} defaults to {@code false} (noise/load).
+     */
+    private Map<String, Boolean> enabledTimeframes = defaultEnabledTimeframes();
     private Breakout breakout = new Breakout();
     private Breakdown breakdown = new Breakdown();
     private Pinbar pinbar = new Pinbar();
@@ -33,12 +40,61 @@ public class PatternProperties {
     private Expiry expiry = new Expiry();
     private Ws ws = new Ws();
 
+    private static Map<String, Boolean> defaultEnabledTimeframes() {
+        Map<String, Boolean> m = new LinkedHashMap<>();
+        m.put("1m", false);
+        m.put("5m", true);
+        m.put("15m", true);
+        m.put("1h", true);
+        m.put("4h", true);
+        m.put("1d", true);
+        return m;
+    }
+
     public boolean isEnabled() {
         return enabled;
     }
 
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
+    }
+
+    public Map<String, Boolean> getEnabledTimeframes() {
+        return enabledTimeframes;
+    }
+
+    public void setEnabledTimeframes(Map<String, Boolean> enabledTimeframes) {
+        this.enabledTimeframes = enabledTimeframes != null
+                ? new LinkedHashMap<>(enabledTimeframes)
+                : defaultEnabledTimeframes();
+    }
+
+    /**
+     * Whether closed-bar pattern evaluation should run for this timeframe.
+     * Unknown / omitted TF → enabled (true). Explicit {@code false} disables.
+     */
+    public boolean isTimeframeEnabled(String timeframe) {
+        if (timeframe == null || timeframe.isBlank()) {
+            return false;
+        }
+        if (enabledTimeframes == null || enabledTimeframes.isEmpty()) {
+            return true;
+        }
+        Boolean flag = enabledTimeframes.get(timeframe.trim());
+        if (flag == null) {
+            // Case-insensitive fallback (e.g. "1M")
+            String key = timeframe.trim().toLowerCase(Locale.ROOT);
+            flag = enabledTimeframes.get(key);
+            if (flag == null) {
+                for (Map.Entry<String, Boolean> e : enabledTimeframes.entrySet()) {
+                    if (e.getKey() != null && e.getKey().equalsIgnoreCase(timeframe.trim())) {
+                        flag = e.getValue();
+                        break;
+                    }
+                }
+            }
+        }
+        return flag == null || flag;
     }
 
     public int getAtrPeriod() {

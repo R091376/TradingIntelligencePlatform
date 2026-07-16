@@ -92,6 +92,10 @@ public class PatternEvaluator {
         }
         String symbolId = event.instrumentKey();
         String timeframe = event.timeframe();
+        if (!patternProperties.isTimeframeEnabled(timeframe)) {
+            log.debug("Pattern eval skipped (timeframe disabled): {} {}", symbolId, timeframe);
+            return;
+        }
         log.info("Pattern eval (async) on close: {} {} bar={}",
                 symbolId, timeframe, event.candle() != null ? event.candle().time() : null);
         seriesGate.run(symbolId, timeframe, () -> evaluateUnlocked(symbolId, timeframe, event.candle()));

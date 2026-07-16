@@ -5,6 +5,7 @@ export default function ChartTypeToggle({ chartType, onChange }) {
         type="button"
         className={chartType === 'candlestick' ? 'active' : ''}
         onClick={() => onChange('candlestick')}
+        title="Candlestick"
       >
         Candlestick
       </button>
@@ -12,6 +13,7 @@ export default function ChartTypeToggle({ chartType, onChange }) {
         type="button"
         className={chartType === 'line' ? 'active' : ''}
         onClick={() => onChange('line')}
+        title="Line"
       >
         Line
       </button>

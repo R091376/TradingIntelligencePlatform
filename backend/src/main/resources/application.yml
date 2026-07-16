@@ -68,6 +68,15 @@ tip:
       1d: 730
   pattern:
     enabled: true
+    # Per-TF closed-bar evaluation. Set a timeframe to false to skip detect/lifecycle
+    # (REST/WS still show any existing journaled instances). 1m off by default (noise/load).
+    enabled-timeframes:
+      1m: false
+      5m: true
+      15m: true
+      1h: true
+      4h: true
+      1d: true
     atr-period: 14
     stats-min-sample-size: 20
     breakout:

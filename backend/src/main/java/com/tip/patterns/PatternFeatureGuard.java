@@ -34,11 +34,12 @@ public class PatternFeatureGuard {
     void logEnablement() {
         boolean full = isFullyEnabled();
         log.info(
-                "Pattern pipeline fullyEnabled={} (pattern.enabled={}, journal.active={}, store={})",
+                "Pattern pipeline fullyEnabled={} (pattern.enabled={}, journal.active={}, store={}, enabledTimeframes={})",
                 full,
                 patternProperties.isEnabled(),
                 patternJournal.isActive(),
-                watchlistStore
+                watchlistStore,
+                patternProperties.getEnabledTimeframes()
         );
     }
 

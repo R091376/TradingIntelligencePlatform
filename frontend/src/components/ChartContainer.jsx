@@ -892,24 +892,13 @@ export default function ChartContainer() {
     <div className="chart-page">
       <header className="chart-header">
         <div className="chart-header__title">
-          <h1>
-            {activeSymbolId ? `${displayName} · ${timeframe}` : 'Loading…'}
-          </h1>
+          <h1>{activeSymbolId ? displayName : 'Loading…'}</h1>
           <ConnectionStatus status={connectionStatus} />
         </div>
-        <div className="chart-header__controls">
-          <ChartTypeToggle chartType={chartType} onChange={setChartType} />
-        </div>
-      </header>
 
-      {error && <div className="chart-error">{error}</div>}
-      {!error && infoMessage && <div className="chart-info">{infoMessage}</div>}
-
-      <div className="chart-body">
-        <aside className="tf-rail" aria-label="Timeframes">
-          <div className="tf-rail__label">TF</div>
+        <div className="chart-header__controls" aria-label="Chart controls">
           <TimeframeSelector
-            orientation="vertical"
+            orientation="horizontal"
             timeframes={timeframes}
             value={timeframe}
             onChange={handleTimeframeChange}
@@ -921,8 +910,14 @@ export default function ChartContainer() {
               activeIsPending
             }
           />
-        </aside>
+          <ChartTypeToggle chartType={chartType} onChange={setChartType} />
+        </div>
+      </header>
 
+      {error && <div className="chart-error">{error}</div>}
+      {!error && infoMessage && <div className="chart-info">{infoMessage}</div>}
+
+      <div className="chart-body">
         <div className="chart-panel">
           {(loading || switching || activeIsPending) && (
             <div className="chart-loading">
