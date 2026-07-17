@@ -21,7 +21,12 @@ public record MarketProperties(
         /**
          * Optional per-timeframe lookback (calendar days). Keys: {@code 1m}, {@code 5m}, …
          */
-        Map<String, Integer> historicalLookbackDaysByTimeframe
+        Map<String, Integer> historicalLookbackDaysByTimeframe,
+        /**
+         * When true, seed logs include first/last candle samples (time + OHLC).
+         * Default false — only candle counts at INFO (quieter multi-symbol startup).
+         */
+        Boolean seedLogDetail
 ) {
 
     private static final List<String> DEFAULT_TIMEFRAMES =
@@ -62,6 +67,14 @@ public record MarketProperties(
             });
             historicalLookbackDaysByTimeframe = Map.copyOf(merged);
         }
+        if (seedLogDetail == null) {
+            seedLogDetail = false;
+        }
+    }
+
+    /** Whether seed paths should log first/last candle samples. */
+    public boolean seedLogDetailEnabled() {
+        return Boolean.TRUE.equals(seedLogDetail);
     }
 
     public boolean isSupportedTimeframe(String timeframe) {

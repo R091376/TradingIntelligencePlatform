@@ -327,19 +327,29 @@ public class MarketBootstrapService {
         return "Failed to fetch market data from Upstox: " + details;
     }
 
+    /**
+     * Seed fetch summary. Default (tip.market.seed-log-detail=false): counts only.
+     * Detail mode also logs first/last bar samples for debugging.
+     */
     private void logCandleSummary(String label, List<Candle> candles) {
         if (candles.isEmpty()) {
-            log.warn("{} candles: none returned", label);
+            log.warn("{} candles: count=0", label);
+            return;
+        }
+
+        if (!marketProperties.seedLogDetailEnabled()) {
+            log.info("{} candles: count={}", label, candles.size());
             return;
         }
 
         Candle first = candles.get(0);
         Candle last = candles.get(candles.size() - 1);
-        log.info("{} candles: count={}, first=[time={} C={}], last=[time={} C={}]",
+        log.info(
+                "{} candles: count={}, first=[time={} O={} H={} L={} C={} V={}], last=[time={} O={} H={} L={} C={} V={}]",
                 label,
                 candles.size(),
-                first.time(), first.close(),
-                last.time(), last.close());
+                first.time(), first.open(), first.high(), first.low(), first.close(), first.volume(),
+                last.time(), last.open(), last.high(), last.low(), last.close(), last.volume());
     }
 
     /** Result of {@link #bootstrapSymbol(WatchlistEntry)}. */

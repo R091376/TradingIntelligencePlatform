@@ -69,6 +69,16 @@ public interface PatternJournal {
 
     Optional<PatternStatisticsSnapshot> findStatistics(String symbolId, String patternType, String timeframe);
 
+    /**
+     * Bulk read of pre-aggregated statistics for ranking UI.
+     * Filters are optional ({@code null}/blank = all). Only rows for the given symbol ids.
+     */
+    List<PatternStatisticsSnapshot> findStatisticsForSymbols(
+            Collection<String> symbolIds,
+            String patternType,
+            String timeframe
+    );
+
     /** No-op default for memory mode. */
     final class NoOp implements PatternJournal {
         public static final NoOp INSTANCE = new NoOp();
@@ -115,6 +125,15 @@ public interface PatternJournal {
                 String symbolId, String patternType, String timeframe
         ) {
             return Optional.empty();
+        }
+
+        @Override
+        public List<PatternStatisticsSnapshot> findStatisticsForSymbols(
+                Collection<String> symbolIds,
+                String patternType,
+                String timeframe
+        ) {
+            return List.of();
         }
     }
 

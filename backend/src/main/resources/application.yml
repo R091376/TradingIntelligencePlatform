@@ -66,6 +66,8 @@ tip:
       1h: 180
       4h: 365
       1d: 730
+    # Startup seed logs: false = candle counts only; true = first/last OHLCV samples.
+    seed-log-detail: false
   pattern:
     enabled: true
     # Per-TF closed-bar evaluation. Set a timeframe to false to skip detect/lifecycle

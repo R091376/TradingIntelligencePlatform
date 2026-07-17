@@ -7,6 +7,8 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 public interface PatternStatisticsJpaRepository
@@ -28,4 +30,10 @@ public interface PatternStatisticsJpaRepository
     Optional<PatternStatisticsEntity> findBySymbolIdAndPatternTypeAndTimeframe(
             String symbolId, String patternType, String timeframe
     );
+
+    /**
+     * All statistics buckets for the given symbols (active watchlist keys).
+     * Empty collection → empty result (callers should short-circuit).
+     */
+    List<PatternStatisticsEntity> findBySymbolIdIn(Collection<String> symbolIds);
 }

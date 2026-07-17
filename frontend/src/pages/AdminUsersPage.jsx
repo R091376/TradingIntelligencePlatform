@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useAuth } from '../auth/AuthContext'
+import { useAuth } from '../auth/useAuth'
+import UserAccountMenu from '../components/UserAccountMenu'
 import {
   createUser,
   listUsers,
@@ -10,6 +11,7 @@ import {
   setTradingEnabled,
   updateUser,
 } from '../services/adminUsersApi'
+import '../styles/userAccount.css'
 import './authPages.css'
 
 function money(n) {
@@ -106,9 +108,10 @@ export default function AdminUsersPage() {
           <Link to="/" className="admin-link">
             ← Chart
           </Link>
-          <button type="button" className="admin-btn admin-btn--ghost" onClick={() => logout()}>
-            Logout
-          </button>
+          <Link to="/patterns/stats" className="admin-link">
+            Stats
+          </Link>
+          <UserAccountMenu user={user} onLogout={() => logout()} />
         </div>
       </header>
 

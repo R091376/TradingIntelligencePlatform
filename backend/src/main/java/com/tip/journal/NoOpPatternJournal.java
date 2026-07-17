@@ -5,6 +5,7 @@ import com.tip.patterns.model.PatternStageEvent;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -63,5 +64,14 @@ public class NoOpPatternJournal implements PatternJournal {
             String symbolId, String patternType, String timeframe
     ) {
         return delegate.findStatistics(symbolId, patternType, timeframe);
+    }
+
+    @Override
+    public List<PatternStatisticsSnapshot> findStatisticsForSymbols(
+            Collection<String> symbolIds,
+            String patternType,
+            String timeframe
+    ) {
+        return delegate.findStatisticsForSymbols(symbolIds, patternType, timeframe);
     }
 }

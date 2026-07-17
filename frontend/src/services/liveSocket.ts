@@ -2,15 +2,35 @@
  * Live candle WebSocket client with auto-reconnect.
  * Always sends both symbolId and timeframe on subscribe.
  */
-export function createLiveSocket({ symbolId, timeframe, onMessage, onStatus }) {
+
+export type LiveSocketStatus = 'connecting' | 'connected' | 'disconnected' | 'error'
+
+export type LiveSocketHandlers = {
+  symbolId: string
+  timeframe: string
+  onMessage: (message: Record<string, unknown>) => void
+  onStatus: (status: LiveSocketStatus, message?: string) => void
+}
+
+export type LiveSocketHandle = {
+  subscribe: (nextSymbolId: string, nextTimeframe: string) => void
+  close: () => void
+}
+
+export function createLiveSocket({
+  symbolId,
+  timeframe,
+  onMessage,
+  onStatus,
+}: LiveSocketHandlers): LiveSocketHandle {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   const url = `${protocol}//${window.location.host}/ws/live`
 
   let currentSymbolId = symbolId
   let currentTimeframe = timeframe
-  let ws = null
+  let ws: WebSocket | null = null
   let closedIntentionally = false
-  let reconnectTimer = null
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let attempt = 0
 
   const BASE_DELAY_MS = 1000
@@ -23,7 +43,7 @@ export function createLiveSocket({ symbolId, timeframe, onMessage, onStatus }) {
     }
   }
 
-  function sendSubscribe(nextSymbolId, nextTimeframe) {
+  function sendSubscribe(nextSymbolId: string, nextTimeframe: string) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return
     if (!nextSymbolId) return
     ws.send(
@@ -68,9 +88,9 @@ export function createLiveSocket({ symbolId, timeframe, onMessage, onStatus }) {
 
     ws.onmessage = (event) => {
       try {
-        const message = JSON.parse(event.data)
+        const message = JSON.parse(String(event.data)) as Record<string, unknown>
         if (message.type === 'error') {
-          onStatus('error', message.message)
+          onStatus('error', String(message.message ?? ''))
           return
         }
         onMessage(message)
@@ -80,7 +100,6 @@ export function createLiveSocket({ symbolId, timeframe, onMessage, onStatus }) {
     }
 
     ws.onerror = () => {
-      // onclose will fire after; avoid double reconnect
       onStatus('error')
     }
 
@@ -98,13 +117,7 @@ export function createLiveSocket({ symbolId, timeframe, onMessage, onStatus }) {
   connect()
 
   return {
-    /**
-     * Re-subscribe to a symbol + timeframe stream.
-     * Queued until the socket is OPEN (including mid-reconnect).
-     * @param {string} nextSymbolId
-     * @param {string} nextTimeframe
-     */
-    subscribe(nextSymbolId, nextTimeframe) {
+    subscribe(nextSymbolId: string, nextTimeframe: string) {
       currentSymbolId = nextSymbolId
       currentTimeframe = nextTimeframe
       sendSubscribe(currentSymbolId, currentTimeframe)

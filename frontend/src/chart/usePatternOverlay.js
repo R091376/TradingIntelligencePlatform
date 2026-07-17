@@ -135,6 +135,8 @@ export function usePatternOverlay({
     const drawEvents = events.length ? events : [focusAlert]
     const focusView = opts.focusView !== false
     const candles = sortedCandlesFromMap(candlesRef.current)
+    // Never paint on empty series — clears pending and flashes wrong viewport/markers.
+    if (!candles.length) return false
 
     wipeOverlay()
     overlayHandleRef.current = applyInstanceOverlay(seriesRef.current, chartRef.current, {

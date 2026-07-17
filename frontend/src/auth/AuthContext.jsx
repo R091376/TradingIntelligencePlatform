@@ -1,7 +1,6 @@
 import {
   createContext,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -10,7 +9,8 @@ import {
 import { fetchMe, login as apiLogin, logout as apiLogout } from '../services/authApi'
 import { isAdminRole } from './roles'
 
-const AuthContext = createContext(null)
+/** @type {import('react').Context<any>} */
+export const AuthContext = createContext(null)
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
@@ -23,7 +23,6 @@ export function AuthProvider({ children }) {
     const epoch = authEpochRef.current
     try {
       const me = await fetchMe()
-      // Ignore if login/logout happened while this request was in flight
       if (epoch !== authEpochRef.current) {
         return me
       }
@@ -103,10 +102,4 @@ export function AuthProvider({ children }) {
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
-}
-
-export function useAuth() {
-  const ctx = useContext(AuthContext)
-  if (!ctx) throw new Error('useAuth requires AuthProvider')
-  return ctx
 }

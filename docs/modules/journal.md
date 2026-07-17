@@ -55,6 +55,16 @@ API gate: return real stats only if `sample_size >= 20`; else `insufficient_hist
 
 Statistics are keyed by `(symbol_id, pattern_type, timeframe)` — Breakout and Breakdown aggregate separately.
 
+### Research ranking API
+
+| Endpoint | Source |
+|---|---|
+| `GET /api/pattern-statistics?patternType=&timeframe=` | **`pattern_statistics` only** (+ active watchlist filter for symbol ids / labels) |
+
+- Authenticated (all roles). 503 when patterns disabled.
+- Always returns S/F/E counts; rates/means only when `sample_size >= minSampleSize`.
+- Frontend: `/patterns/stats` (dense table + expand row).
+
 ## When journal is off
 
 | Condition | Behavior |

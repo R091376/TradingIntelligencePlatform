@@ -13,7 +13,7 @@ const nsePartsFormatter = new Intl.DateTimeFormat('en-US', {
   hourCycle: 'h23',
 })
 
-function partValue(parts, type) {
+function partValue(parts: Intl.DateTimeFormatPart[], type: Intl.DateTimeFormatPartTypes): number {
   return Number(parts.find((part) => part.type === type)?.value ?? 0)
 }
 
@@ -26,7 +26,8 @@ function partValue(parts, type) {
  *
  * @see https://tradingview.github.io/lightweight-charts/docs/time-zones
  */
-export function utcToNseChartTime(utcSeconds) {
+export function utcToNseChartTime(utcSeconds: number | string | null | undefined): number {
+  if (utcSeconds == null || utcSeconds === '') return 0
   const sec = Number(utcSeconds)
   if (!Number.isFinite(sec)) return 0
   const parts = nsePartsFormatter.formatToParts(new Date(sec * 1000))

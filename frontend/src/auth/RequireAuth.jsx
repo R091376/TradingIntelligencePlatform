@@ -1,5 +1,5 @@
 import { Link, Navigate, useLocation } from 'react-router-dom'
-import { useAuth } from '../auth/AuthContext'
+import { useAuth } from './useAuth'
 import '../pages/authPages.css'
 
 export default function RequireAuth({ children, adminOnly = false }) {

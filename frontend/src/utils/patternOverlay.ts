@@ -5,15 +5,20 @@ import { utcToNseChartTime } from './chartTime'
 const FOCUS_BARS_EACH_SIDE = 40
 
 /** Memory / series key: symbolId + timeframe */
-export function seriesKey(symbolId, timeframe) {
+export function seriesKey(
+  symbolId: string | null | undefined,
+  timeframe: string | null | undefined,
+): string | null {
   if (!symbolId || !timeframe) return null
   return `${symbolId}|${timeframe}`
 }
 
+export type StageColors = { line: string; marker: string }
+
 /**
  * Stage → marker / price-line colors (dark theme).
  */
-export function stageColors(stage) {
+export function stageColors(stage: string | null | undefined): StageColors {
   const s = (stage || '').toLowerCase()
   switch (s) {
     case 'succeeded':
@@ -34,7 +39,7 @@ export function stageColors(stage) {
 }
 
 /** Short labels for chart markers (keep readable at small size). */
-export function stageShortLabel(stage) {
+export function stageShortLabel(stage: string | null | undefined): string {
   switch ((stage || '').toLowerCase()) {
     case 'detected':
       return 'DET'
@@ -59,7 +64,10 @@ export function stageShortLabel(stage) {
  * Bar-relative anchor: longs above the candle, shorts below (invalidations opposite).
  * Stage-specific shapes/sizes intentionally not used — keep markers uniform.
  */
-function markerPosition(stage, direction) {
+function markerPosition(
+  stage: string | null | undefined,
+  direction: string | null | undefined,
+): 'aboveBar' | 'belowBar' {
   const s = (stage || '').toLowerCase()
   const short = direction === 'short'
   if (s === 'failed' || s === 'expired') {
@@ -69,7 +77,7 @@ function markerPosition(stage, direction) {
   return short ? 'belowBar' : 'aboveBar'
 }
 
-const STAGE_ORDER = {
+const STAGE_ORDER: Record<string, number> = {
   detected: 1,
   confirmed: 2,
   retested: 3,
@@ -79,10 +87,27 @@ const STAGE_ORDER = {
   expired: 5,
 }
 
+export type PatternAlertLike = {
+  id?: string
+  instanceId?: string
+  time?: number
+  stage?: string
+  symbolId?: string
+  timeframe?: string
+  patternType?: string
+  direction?: string
+  referenceLevel?: number
+  price?: number
+  [key: string]: unknown
+}
+
 /**
  * All session events for one pattern instance, oldest first.
  */
-export function collectInstanceEvents(alerts, instanceId) {
+export function collectInstanceEvents(
+  alerts: PatternAlertLike[] | null | undefined,
+  instanceId: string | null | undefined,
+): PatternAlertLike[] {
   if (!instanceId || !alerts?.length) return []
   return alerts
     .filter((a) => a.instanceId === instanceId)
@@ -99,9 +124,11 @@ export function collectInstanceEvents(alerts, instanceId) {
 
 /**
  * Nearest value in a sorted ascending numeric array.
- * @returns {{ value: number, index: number } | null}
  */
-export function nearestInSorted(sorted, target) {
+export function nearestInSorted(
+  sorted: number[] | null | undefined,
+  target: number | null | undefined,
+): { value: number; index: number } | null {
   if (!sorted?.length || target == null || Number.isNaN(Number(target))) return null
   const t = Number(target)
   let lo = 0
@@ -122,11 +149,28 @@ export function nearestInSorted(sorted, target) {
   return { value: b, index: lo }
 }
 
-/**
- * Clear previous price line + series markers plugin.
- * @param {{ series: object, priceLine?: object, markersPlugin?: object } | null} handle
- */
-export function clearPatternOverlay(handle) {
+/** Loose LWC series/chart handles — avoid tight coupling to library generics. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type LwcSeries = any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type LwcChart = any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type LwcPriceLine = any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type LwcMarkersPlugin = any
+
+export type PatternOverlayHandle = {
+  series: LwcSeries
+  priceLine?: LwcPriceLine | null
+  markersPlugin?: LwcMarkersPlugin | null
+  instanceId?: string
+  focusAlertId?: string
+  symbolId?: string
+  timeframe?: string
+}
+
+/** Clear previous price line + series markers plugin. */
+export function clearPatternOverlay(handle: PatternOverlayHandle | null | undefined): void {
   if (!handle?.series) return
   try {
     if (handle.priceLine) {
@@ -145,26 +189,27 @@ export function clearPatternOverlay(handle) {
   }
 }
 
+export type OverlaySpec = {
+  events?: PatternAlertLike[]
+  focusAlert?: PatternAlertLike
+  patternType?: string
+  direction?: string
+  referenceLevel?: number
+  instanceId?: string
+  seriesChartTimes?: number[]
+  focusView?: boolean
+}
+
 /**
  * Draw full instance lifecycle: one reference-level line + markers for each known stage.
- *
- * @param {object} series
- * @param {object} chart
- * @param {{
- *   events: Array,
- *   focusAlert?: object,
- *   patternType?: string,
- *   direction?: string,
- *   referenceLevel?: number,
- *   instanceId?: string,
- *   seriesChartTimes?: number[],
- *   focusView?: boolean,
- * }} spec
- * @returns handle for later clear, or null
  */
-export function applyInstanceOverlay(series, chart, spec) {
+export function applyInstanceOverlay(
+  series: LwcSeries,
+  chart: LwcChart,
+  spec: OverlaySpec | null | undefined,
+): PatternOverlayHandle | null {
   if (!series || !chart || !spec) return null
-  const events = spec.events?.length
+  const events: PatternAlertLike[] = spec.events?.length
     ? spec.events
     : spec.focusAlert
       ? [spec.focusAlert]
@@ -177,7 +222,7 @@ export function applyInstanceOverlay(series, chart, spec) {
     Number(
       spec.referenceLevel ??
         focus.referenceLevel ??
-        events.find((e) => e.referenceLevel != null)?.referenceLevel,
+        events.find((e: PatternAlertLike) => e.referenceLevel != null)?.referenceLevel,
     ) || Number(focus.price)
 
   if (!Number.isFinite(ref)) return null
@@ -191,7 +236,7 @@ export function applyInstanceOverlay(series, chart, spec) {
   const direction = spec.direction || focus.direction
   const dirBit = direction ? ` · ${direction}` : ''
 
-  let priceLine = null
+  let priceLine: LwcPriceLine | null = null
   try {
     priceLine = series.createPriceLine({
       price: ref,
@@ -205,7 +250,7 @@ export function applyInstanceOverlay(series, chart, spec) {
     return null
   }
 
-  const markerSpecs = events.map((ev) => {
+  const markerSpecs = events.map((ev: PatternAlertLike) => {
     const colors = stageColors(ev.stage)
     const rawChartTime = utcToNseChartTime(ev.time)
     const snapped = nearestInSorted(seriesChartTimes, rawChartTime)
@@ -214,7 +259,7 @@ export function applyInstanceOverlay(series, chart, spec) {
       time: chartTime,
       position: markerPosition(ev.stage, direction),
       // Uniform circle + size — bar position + short label carry meaning
-      shape: 'circle',
+      shape: 'circle' as const,
       color: colors.marker,
       text: stageShortLabel(ev.stage),
       size: 1,
@@ -223,7 +268,8 @@ export function applyInstanceOverlay(series, chart, spec) {
   })
 
   // Same bar time: merge short labels instead of dropping earlier stages
-  const byTime = new Map()
+  type MarkerSpec = (typeof markerSpecs)[number]
+  const byTime = new Map<number, MarkerSpec>()
   for (const m of markerSpecs) {
     const prev = byTime.get(m.time)
     if (!prev) {
@@ -244,7 +290,7 @@ export function applyInstanceOverlay(series, chart, spec) {
   }
   const dedupedMarkers = [...byTime.values()].map(({ _focus, ...rest }) => rest)
 
-  let markersPlugin = null
+  let markersPlugin: LwcMarkersPlugin | null = null
   try {
     markersPlugin = createSeriesMarkers(series, dedupedMarkers)
   } catch {
@@ -267,7 +313,7 @@ export function applyInstanceOverlay(series, chart, spec) {
   }
 }
 
-function formatShortPrice(n) {
+function formatShortPrice(n: number | null | undefined): string {
   if (n == null || Number.isNaN(n)) return ''
   return Number(n).toFixed(2)
 }
@@ -275,7 +321,11 @@ function formatShortPrice(n) {
 /**
  * Focus viewport on ~FOCUS_BARS_EACH_SIDE bars around the event (logical range).
  */
-export function tryFocusAroundBar(chart, seriesChartTimes, focusChartTime) {
+export function tryFocusAroundBar(
+  chart: LwcChart,
+  seriesChartTimes: number[] | null | undefined,
+  focusChartTime: number,
+): void {
   if (!chart) return
   try {
     const ts = chart.timeScale()
@@ -307,7 +357,12 @@ export function tryFocusAroundBar(chart, seriesChartTimes, focusChartTime) {
 }
 
 /** Whether restore/pending overlay is expected for current series. */
-export function willRestoreOverlay(pending, memoryFocus, symbolId, timeframe) {
+export function willRestoreOverlay(
+  pending: { symbolId?: string; timeframe?: string } | null | undefined,
+  memoryFocus: unknown,
+  symbolId: string | null | undefined,
+  timeframe: string | null | undefined,
+): boolean {
   if (
     pending &&
     pending.symbolId === symbolId &&

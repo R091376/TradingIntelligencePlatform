@@ -183,26 +183,56 @@ public class PostgresPatternJournal implements PatternJournal {
             String symbolId, String patternType, String timeframe
     ) {
         return statistics.findBySymbolIdAndPatternTypeAndTimeframe(symbolId, patternType, timeframe)
-                .map(s -> new PatternStatisticsSnapshot(
-                        s.getSymbolId(),
-                        s.getPatternType(),
-                        s.getTimeframe(),
-                        s.getSampleSize(),
-                        s.getSuccessCount(),
-                        s.getFailCount(),
-                        s.getExpiredCount(),
-                        s.getSuccessRate(),
-                        s.getResolvedSuccessRate(),
-                        s.getSuccessCount() + s.getFailCount(),
-                        s.getAvgMoveR(),
-                        s.getAvgDurationCandles(),
-                        s.getAvgMfeR(),
-                        s.getAvgMaeR(),
-                        s.getMoveSampleSize(),
-                        s.getMfeSampleSize(),
-                        s.getMaeSampleSize(),
-                        s.getUpdatedAt()
-                ));
+                .map(this::toSnapshot);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<PatternStatisticsSnapshot> findStatisticsForSymbols(
+            Collection<String> symbolIds,
+            String patternType,
+            String timeframe
+    ) {
+        if (symbolIds == null || symbolIds.isEmpty()) {
+            return List.of();
+        }
+        String typeFilter = blankToNull(patternType);
+        String tfFilter = blankToNull(timeframe);
+        return statistics.findBySymbolIdIn(symbolIds).stream()
+                .filter(s -> typeFilter == null || typeFilter.equalsIgnoreCase(s.getPatternType()))
+                .filter(s -> tfFilter == null || tfFilter.equalsIgnoreCase(s.getTimeframe()))
+                .map(this::toSnapshot)
+                .toList();
+    }
+
+    private PatternStatisticsSnapshot toSnapshot(PatternStatisticsEntity s) {
+        return new PatternStatisticsSnapshot(
+                s.getSymbolId(),
+                s.getPatternType(),
+                s.getTimeframe(),
+                s.getSampleSize(),
+                s.getSuccessCount(),
+                s.getFailCount(),
+                s.getExpiredCount(),
+                s.getSuccessRate(),
+                s.getResolvedSuccessRate(),
+                s.getSuccessCount() + s.getFailCount(),
+                s.getAvgMoveR(),
+                s.getAvgDurationCandles(),
+                s.getAvgMfeR(),
+                s.getAvgMaeR(),
+                s.getMoveSampleSize(),
+                s.getMfeSampleSize(),
+                s.getMaeSampleSize(),
+                s.getUpdatedAt()
+        );
+    }
+
+    private static String blankToNull(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim();
     }
 
     private void insertEventIfAbsent(PatternStageEvent ev) {
